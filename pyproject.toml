@@ -1,0 +1,84 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gdrive-scoped"
+version = "0.6.0"
+description = "Read-only, folder-scoped access to one Google Drive subtree, for LLM tools"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Alex Hermida" }]
+keywords = ["google-drive", "llm", "agents", "mcp", "retrieval", "read-only"]
+requires-python = ">=3.12"
+dependencies = [
+  "google-api-python-client>=2.199.0,<3",
+  "google-auth>=2,<3",
+  # Both imported directly by drive.py, to give each worker thread its own
+  # `Http` over one shared credential. They arrive transitively through the
+  # API client too, but relying on that would turn a change there into an
+  # ImportError at first request rather than at resolution.
+  "google-auth-httplib2>=0.2,<0.3",
+  "httplib2>=0.22,<0.31",
+  "openpyxl>=3.1,<4",
+  "pypdf>=6,<7",
+  "python-docx>=1.2,<2",
+  "python-pptx>=1.0,<2",
+]
+
+[project.optional-dependencies]
+# Measurement only: nothing on the serving path imports it, so a consumer that
+# embeds the library does not carry the report models it uses.
+bench = ["pydantic>=2,<3"]
+
+[dependency-groups]
+dev = [
+  "gdrive-scoped[bench]",
+  # For `examples/mcp_server.py` only. The library itself imports no MCP, and
+  # the published package does not depend on the SDK in any configuration.
+  "mcp[cli]>=2.1.1,<3",
+  "pytest>=8,<10",
+  "ruff>=0.12,<1",
+  "ty>=0.0.1a20",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gdrive_scoped"]
+
+# The sdist is an allowlist, not "everything git does not ignore": hatchling honours the
+# repository's ignore file and not the user's, and a build from a working copy once carried
+# a local agent-settings file that only a global gitignore was hiding. `just package` builds
+# and then refuses an archive with anything outside this list.
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "src",
+  "tests",
+  "docs",
+  "examples",
+  "scripts",
+  "evaluation",
+  "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
+  "SECURITY.md",
+  "AGENTS.md",
+  "CONTEXT.md",
+  "justfile",
+  "pyproject.toml",
+  ".python-version",
+  "uv.lock",
+]
+exclude = ["evaluation/*.local.json"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = ["live: opt-in tests that call a configured Google Drive"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]

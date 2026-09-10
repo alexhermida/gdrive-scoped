@@ -1,0 +1,29 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.venv/
+dist/
+
+# Local agent settings. Your global gitignore may hide these, the sdist build does not.
+.claude/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ty/
+
+# Local Google credentials and tokens must never be committed.
+client_secret*.json
+credentials*.json
+service-account*.json
+token*.json
+*.pem
+*.key
+*.p12
+
+# Local scratch material.
+_tmp/
+evaluation/*.local.json

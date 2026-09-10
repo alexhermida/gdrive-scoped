@@ -1,0 +1,32 @@
+[
+  {
+    "question": "What decision was made about the project timeline?",
+    "search_query": "project timeline decision",
+    "expected_source": "planning/timeline",
+    "limit": 10
+  },
+  {
+    "question": "Who owns the current quarterly objective?",
+    "search_query": "quarterly objective owner",
+    "expected_source": "objectives",
+    "limit": 10
+  },
+  {
+    "question": "What risks were identified for the launch?",
+    "search_query": "launch risks",
+    "expected_source": "risk",
+    "limit": 10
+  },
+  {
+    "question": "What did the latest project review conclude?",
+    "search_query": "project review conclusion",
+    "expected_source": "review",
+    "limit": 10
+  },
+  {
+    "question": "Which metrics define success for the initiative?",
+    "search_query": "initiative success metrics",
+    "expected_source": "metrics",
+    "limit": 10
+  }
+]
