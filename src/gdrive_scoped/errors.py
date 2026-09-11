@@ -81,7 +81,8 @@ class ExportTooLarge(DriveError):
 
 
 class EnumerationBudgetExceeded(DriveError):
-    """The folder enumeration hit its page budget before finishing.
+    """The folder enumeration did not finish: its page budget ran out, or Drive
+    itself reported it incomplete (`incompleteSearch`). The message says which.
 
     Raised rather than truncated. A partial folder map is *safe* — every
     missing folder becomes a refusal, never a leak — but it is silently wrong,

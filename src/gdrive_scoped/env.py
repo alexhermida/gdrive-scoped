@@ -54,10 +54,9 @@ class Settings:
     def from_environ(cls, environ: Mapping[str, str] | None = None) -> Settings:
         """Load settings without defaulting either scope identifier.
 
-        Neither the drive kind nor the root folder has a default. A wrong kind
-        does not fail — it silently scopes every query to a drive the root is
-        not in and returns nothing at all, which reads as an empty corpus
-        rather than as a misconfiguration.
+        Neither the drive kind nor the root folder has a default. The kind is an
+        assertion about where the root lives, checked against every item; a
+        defaulted assertion asserts nothing.
         """
 
         values = os.environ if environ is None else environ

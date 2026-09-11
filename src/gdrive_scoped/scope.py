@@ -285,8 +285,11 @@ class ScopedDrive:
 
         Drive has no descendant operator, so a subtree can only be expressed by naming
         every folder in it - but naming them does not require *visiting* them one at a
-        time. One `mimeType = folder` query returns the whole location; the subtree is
-        arithmetic on `parents` after that.
+        time. One `mimeType = folder` query returns every folder the Drive Identity can
+        see, in the configured location or not; the location check drops the rest and
+        the subtree is arithmetic on `parents` after that. Its cost is the identity's
+        reach rather than the corpus - one page per thousand folders - which is why a
+        deployment keeps that reach to the corpus (ADR 0010).
         """
 
         root = await self._validated_root()

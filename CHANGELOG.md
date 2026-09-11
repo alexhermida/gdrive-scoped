@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Shared Drive queries use `corpora=user` with `includeItemsFromAllDrives`, and never a
+  `driveId`. `corpora=drive` addresses the drive itself and Drive refuses it — 403
+  `teamDriveMembershipRequired` — for an identity granted a folder inside the drive rather
+  than membership of it, with and without parent filters. The `user` corpus returned identical
+  results for a drive member and for that grantee, folder enumeration and search alike, so
+  membership of a Shared Drive is now optional and the configured Shared Drive ID is asserted
+  on every item rather than sent. Discovery still enumerates in bulk; its cost is the
+  identity's reach, one page per thousand folders. ADR 0010 has the measurements, and the
+  root-first traversal that was built, measured at six times the cost, and set aside.
+- The benchmark's `initialization` includes the cold folder enumeration, which is what it
+  always claimed to measure; it used to time the root read alone.
+- `GoogleDriveGateway.identity()` returns the address the credentials belong to, and the
+  census and the benchmark print it first. A credential carries no name, and a run as the
+  developer instead of the bot user enumerates a different reach — measured at 9,878 folders
+  in 10 pages against the bot user's 123 in one — and describes a deployment that does not
+  exist.
+- `EnumerationBudgetExceeded` says which of its two causes happened: the page budget ran out,
+  or Drive itself reported the enumeration incomplete (`incompleteSearch`, usually transient
+  under the `user` corpus and worth one retry). It used to report both as the budget, which
+  sent a reader hunting for a reach that was not there. `SearchPage` gains
+  `page_budget_exhausted`.
 - The benchmark derives its own cases when the cases file does not exist, and writes them
   there: the largest readable document of each MIME type, each verified to come back from a
   search for a keyword taken from its own name. A first run against an unfamiliar corpus now

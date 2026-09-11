@@ -35,6 +35,11 @@ exception being a *folder* moved out of the subtree, which keeps serving until t
 expires (ADR 0005; set the TTL to `0` to close that window at the cost of an enumeration per
 request).
 
+The Drive Identity needs the root folder shared with it, and nothing more: no query addresses
+a Shared Drive by ID, so membership is not required (ADR 0010). Discovery enumerates every
+folder the identity can see and keeps the corpus, so its cost is the identity's reach — keep
+that reach to the corpus.
+
 Every decision, allow or refuse, is one structured record on the `gdrive_scoped.audit` logger,
 and so is every completed operation, carrying the caller when the adapter names one.
 
@@ -68,8 +73,8 @@ only by this repository's own entry points (`gdrive_scoped.env`), never by the l
 
 | Variable | |
 | --- | --- |
-| `GDRIVE_DRIVE_KIND` | `shared_drive` or `my_drive`. Required — there is no default, because the wrong one returns an empty corpus rather than an error. |
-| `GDRIVE_SHARED_DRIVE_ID` | Required for `shared_drive`, and must be unset for `my_drive`. |
+| `GDRIVE_DRIVE_KIND` | `shared_drive` or `my_drive`. Required — there is no default: it is an assertion about where the root lives, checked against every item, and a defaulted assertion asserts nothing. |
+| `GDRIVE_SHARED_DRIVE_ID` | Required for `shared_drive`, and must be unset for `my_drive`. Asserted on every item; never sent as a query parameter, so membership of the drive is not needed. |
 | `GDRIVE_ROOT_FOLDER_ID` | The folder ID from a `https://drive.google.com/drive/folders/<id>` URL. The alias `root` is refused: the whole of a Drive is not a corpus. |
 | `GDRIVE_FOLDER_MAP_TTL_SECONDS` | Optional, default 60. `0` re-enumerates every request. |
 | `GDRIVE_OAUTH_CLIENT_ID`<br>`GDRIVE_OAUTH_CLIENT_SECRET`<br>`GDRIVE_OAUTH_REFRESH_TOKEN` | A stored refresh token for the Drive Identity. Set all three, or none to fall back to Application Default Credentials. |
@@ -84,6 +89,14 @@ gcloud auth application-default login \
 
 Keep OAuth client files out of the repository; `.gitignore` rejects the usual filenames as a
 second line of defence.
+
+Every entry point prints `identity: <address>` before anything else. A credential carries no
+name, and the two identities describe different deployments: the bot user's reach is the
+corpus, a developer's is everything they can see — and discovery enumerates that reach. The
+census that costs the bot user one page cost one developer identity 9,878 folders in 10
+pages and 13 s. `just` does not load `.env`, so export the variables into the shell
+(`set -a; source .env; set +a`); with no `GDRIVE_OAUTH_*` set, the entry points fall back to
+Application Default Credentials, and the identity line is what tells you.
 
 ### What is in the corpus
 

@@ -1,6 +1,6 @@
 # ADR 0004: Support My Drive and Shared Drive locations
 
-- Status: Accepted
+- Status: Accepted; the Shared Drive request policy superseded by ADR 0010
 - Date: 2026-08-30
 
 ## Context
@@ -18,6 +18,11 @@ One deployment configures one Drive Location: `shared_drive` or `my_drive`.
 - Scoped Drive checks location membership before proving current ancestry beneath the Configured Root Folder.
 - My Drive mode permits an accessible personal-drive folder even when another user owns it.
 - An omitted Drive kind defaults to Shared Drive for configuration compatibility.
+
+*Amended by ADR 0010:* Shared Drive mode no longer sends `corpora=drive` with a `driveId`.
+Every query uses the `user` corpus with `includeItemsFromAllDrives`, so membership of the
+drive is not required; the Shared Drive ID is asserted on every item instead. The kind no
+longer has a default anywhere (v0.5.0).
 
 The application continues to request `drive.readonly`; its OAuth grant is broader than the Authorized Subtree, so the application-enforced boundary from ADR 0001 remains mandatory.
 

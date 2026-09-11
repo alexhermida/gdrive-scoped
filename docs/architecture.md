@@ -33,15 +33,15 @@ Dependencies point inward. A transport and Google are both adapters. An adapter 
 
 ### Google Drive gateway
 
-Offers only the read operations the application needs: fetch metadata, list direct children, enumerate every folder in the location, search within named parent folders for a requested number of hits, download blob content, and export Google Workspace content. It exposes no generic request method and no write operation.
+Offers only the read operations the application needs: fetch metadata, list direct children, enumerate every folder the identity can see, search within named parent folders for a requested number of hits, download blob content, and export Google Workspace content. It exposes no generic request method and no write operation.
 
-The gateway selects the Drive list policy from configuration. Shared Drive requests use the exact `driveId` and `drive` corpus. My Drive requests use the `user` corpus without a `driveId` and exclude Shared Drive items.
+Every list query uses the `user` corpus. A Shared Drive location adds `includeItemsFromAllDrives`; a My Drive location excludes Shared Drive items. No query addresses a drive by `driveId`: that requires the Drive Identity to be a *member* of the drive, and being granted the root folder is all it needs (ADR 0010). The configured Shared Drive ID is asserted on every item instead.
 
 ### Scoped Drive
 
 Owns the security boundary. It validates the Configured Root Folder, discovers descendant folders for recursive search, and verifies current ancestry before returning metadata or bytes. No caller can bypass it to reach the gateway. Every decision it makes — allow or refuse — is recorded on the `gdrive_scoped.audit` logger with structured `decision`, `reason` and `file_id`.
 
-Descendant folders are enumerated with one `mimeType = folder` query per Drive location and reused for `GDRIVE_FOLDER_MAP_TTL_SECONDS` (default 60). The item under authorization is always read live; only the chain above it comes from that map. ADR 0005 records what the window exposes and what it cannot.
+Descendant folders are enumerated with one `mimeType = folder` query over everything the Drive Identity can see, filtered to the configured location, and reused for `GDRIVE_FOLDER_MAP_TTL_SECONDS` (default 60). The item under authorization is always read live; only the chain above it comes from that map. ADR 0005 records what the window exposes and what it cannot.
 
 ### Document service
 
@@ -57,7 +57,7 @@ Parsed documents are cached in process by file ID, MIME type, and Drive modifica
 
 ### Discovery
 
-1. Enumerate every folder in the Drive location with one paginated query, then rebuild the subtree from `parents`. A folder with anything other than exactly one parent is not descended into, and neither is anything beneath it.
+1. Enumerate every folder the Drive Identity can see with one paginated query, keep those in the configured Drive Location, then rebuild the subtree from `parents`. A folder with anything other than exactly one parent is not descended into, and neither is anything beneath it.
 2. Search using server-generated, escaped Drive queries constrained to those parent folder IDs.
 3. Require every candidate to belong to the configured Drive Location.
 4. Exclude trash and shortcuts.

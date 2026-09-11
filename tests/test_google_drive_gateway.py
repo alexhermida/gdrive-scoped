@@ -69,12 +69,27 @@ class RecordingFiles:
         return self.response if isinstance(self.response, Exception) else content
 
 
+class RecordingAbout:
+    def __init__(self, response: dict[str, Any], calls: list[dict[str, Any]]) -> None:
+        self._response = response
+        self._calls = calls
+        self.get_arguments: dict[str, Any] | None = None
+
+    def get(self, **kwargs: Any) -> StaticRequest:
+        self.get_arguments = kwargs
+        return StaticRequest(self._response, self._calls)
+
+
 class RecordingService:
-    def __init__(self, files: RecordingFiles) -> None:
+    def __init__(self, files: RecordingFiles, about: RecordingAbout | None = None) -> None:
         self._files = files
+        self._about = about or RecordingAbout({"user": {"emailAddress": "nobody@example.org"}}, [])
 
     def files(self) -> RecordingFiles:
         return self._files
+
+    def about(self) -> RecordingAbout:
+        return self._about
 
 
 def make_gateway(files: RecordingFiles, location: DriveLocation) -> GoogleDriveGateway:
@@ -159,8 +174,8 @@ async def test_gateway_lists_every_shared_drive_page_and_deduplicates_items() ->
     assert [item.id for item in items] == ["file-1", "file-2"]
     assert len(files.list_arguments) == 2
     first_request = files.list_arguments[0]
-    assert first_request["corpora"] == "drive"
-    assert first_request["driveId"] == "drive-1"
+    assert first_request["corpora"] == "user"
+    assert "driveId" not in first_request
     assert first_request["includeItemsFromAllDrives"] is True
     assert first_request["supportsAllDrives"] is True
     assert first_request["orderBy"] == "name_natural"
@@ -269,8 +284,9 @@ async def test_gateway_builds_search_queries_instead_of_accepting_drive_syntax()
     assert "('root' in parents or 'nested' in parents)" in request["q"]
     assert "fullText contains 'budget\\'s \\\\ plan'" in request["q"]
     assert "mimeType != 'application/vnd.google-apps.folder'" in request["q"]
-    assert request["corpora"] == "drive"
-    assert request["driveId"] == "drive-1"
+    assert request["corpora"] == "user"
+    assert "driveId" not in request
+    assert request["includeItemsFromAllDrives"] is True
     # Drive refuses `fullText` combined with `orderBy`; sending one fails the whole search.
     assert "orderBy" not in request
 
@@ -319,12 +335,37 @@ async def test_gateway_enumerates_every_folder_in_one_paginated_query() -> None:
     assert first_request["q"] == (
         "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     )
-    assert first_request["corpora"] == "drive"
-    assert first_request["driveId"] == "drive-1"
+    assert first_request["corpora"] == "user"
+    assert "driveId" not in first_request
     assert first_request["includeItemsFromAllDrives"] is True
     assert first_request["pageSize"] == 1000
     # The caller rebuilds the hierarchy from `parents`, so ordering would buy nothing.
     assert "orderBy" not in first_request
+
+
+@pytest.mark.anyio
+async def test_shared_drive_queries_never_address_the_drive_itself() -> None:
+    """`corpora=drive` with a `driveId` asks Drive for the drive itself, and Drive
+    refuses that for an identity granted one folder inside it: 403
+    `teamDriveMembershipRequired`, measured with no parent filter and again with
+    the 59-parent filter a search sends. `corpora=user` with
+    `includeItemsFromAllDrives` answered every query identically for a drive
+    member and for the grantee, so membership is never required. The Shared
+    Drive ID is still asserted, on every item, by `DriveLocation.contains`."""
+    files = RecordingFiles({}, list_responses={None: {"files": []}})
+    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+
+    await gateway.list_children("root")
+    await gateway.list_folders()
+    await gateway.list_descendants(("root",))
+    await gateway.search_items(("root",), "anything", limit=10)
+
+    assert len(files.list_arguments) == 4
+    for request in files.list_arguments:
+        assert request["corpora"] == "user"
+        assert request["includeItemsFromAllDrives"] is True
+        assert request["supportsAllDrives"] is True
+        assert "driveId" not in request
 
 
 def http_error(status: int, *, reason: str | None = None, message: str = "boom") -> HttpError:
@@ -513,10 +554,45 @@ async def test_a_folder_enumeration_that_outruns_its_budget_fails_loudly() -> No
     files = RecordingFiles({}, list_responses=dict.fromkeys([None, "more"], endless))
     gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
 
-    with pytest.raises(EnumerationBudgetExceeded):
+    with pytest.raises(EnumerationBudgetExceeded, match="within 20 pages"):
         await gateway.list_folders()
 
     assert len(files.list_arguments) == drive.FOLDER_PAGE_BUDGET
+
+
+@pytest.mark.anyio
+async def test_an_enumeration_drive_calls_incomplete_says_so_rather_than_blaming_the_budget() -> (
+    None
+):
+    """Drive can answer a complete-looking page with `incompleteSearch: true`:
+    part of what the identity can see was not searched in time. That is a
+    different failure from outgrowing the page budget — transient where the
+    budget is structural — and reporting it as "did not complete within 20
+    pages" sends whoever reads it hunting for a reach that is not there."""
+    files = RecordingFiles({}, list_responses={None: {"files": [], "incompleteSearch": True}})
+    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+
+    with pytest.raises(EnumerationBudgetExceeded, match="incompleteSearch") as raised:
+        await gateway.list_folders()
+
+    assert "20 pages" not in str(raised.value)
+
+
+@pytest.mark.anyio
+async def test_the_gateway_can_say_which_identity_it_is_using() -> None:
+    """A credential carries no name. The census that runs as the developer
+    instead of the bot user enumerates a different reach and describes a
+    different deployment, and nothing in its output says so unless this does."""
+    about = RecordingAbout({"user": {"emailAddress": "bot@example.org"}}, [])
+    files = RecordingFiles({})
+    gateway = GoogleDriveGateway(
+        RecordingService(files, about),
+        DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"),
+        credentials=UserCredentials(None),
+    )
+
+    assert await gateway.identity() == "bot@example.org"
+    assert about.get_arguments == {"fields": "user(emailAddress)"}
 
 
 @pytest.mark.anyio

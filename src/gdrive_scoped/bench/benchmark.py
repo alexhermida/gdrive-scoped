@@ -80,6 +80,8 @@ class BenchmarkReport(BaseModel):
     #: Recorded because it changes what the numbers mean: a run with a warm folder map
     #: is not comparable to one that re-enumerates on every request.
     folder_map_ttl_seconds: float
+    #: Root validation plus the cold folder enumeration: what a fresh process pays
+    #: before it can answer anything.
     initialization_ms: float
     passed: bool
     cases: list[CaseBenchmark]
@@ -173,8 +175,11 @@ class RetrievalBenchmark:
             folder_map_ttl_seconds=self.folder_map_ttl_seconds,
         )
 
+        # The root read alone is one metadata call; the folder enumeration behind
+        # `folder_paths` is the part a cold process actually waits for.
         initialization_started = self.clock()
         await scoped_drive.initialize()
+        await scoped_drive.folder_paths()
         initialization_ms = _elapsed_ms(initialization_started, self.clock())
 
         for _ in range(warmup_iterations):

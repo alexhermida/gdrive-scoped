@@ -93,6 +93,10 @@ class SearchPage:
     #: Drive offered a further page after the requested count was met. Distinct
     #: from `incomplete`: the corpus was fully visible, the caller asked for less.
     has_more: bool = False
+    #: Which kind of incomplete: the page budget ran out. False with `incomplete`
+    #: set means Drive itself said `incompleteSearch` — a transient condition,
+    #: where the budget is a structural one, and they need different responses.
+    page_budget_exhausted: bool = False
 
 
 class DriveGateway(Protocol):
@@ -105,7 +109,7 @@ class DriveGateway(Protocol):
         """List every current direct child of one folder."""
 
     async def list_folders(self) -> list[DriveItem]:
-        """List every current folder in the configured Drive location."""
+        """List every current folder the identity can see; the caller keeps the location's."""
 
     async def list_descendants(self, parent_ids: tuple[str, ...]) -> list[DriveItem]:
         """List every current non-folder item whose direct parent is named."""
@@ -225,6 +229,20 @@ class GoogleDriveGateway:
         # by rank position.
         return await self._list_items(query, page_budget=SEARCH_PAGE_BUDGET, wanted=limit)
 
+    async def identity(self) -> str:
+        """The address of the Drive Identity these credentials belong to.
+
+        Not part of `DriveGateway`: the boundary never needs it. Entry points
+        do — a census run as the developer instead of the bot user enumerates
+        a different reach and describes a different deployment, and a
+        credential carries no name of its own.
+        """
+
+        request = self._service.about().get(fields="user(emailAddress)")
+        response = await self._execute(request, self._metadata_http)
+        user = cast("Mapping[str, Any]", response).get("user", {})
+        return str(cast("Mapping[str, Any]", user).get("emailAddress", "unknown"))
+
     async def download_item(self, item_id: str) -> bytes:
         request = self._service.files().get_media(fileId=item_id, supportsAllDrives=True)
         content = await self._execute(request, self._transfer_http)
@@ -258,12 +276,18 @@ class GoogleDriveGateway:
         items_by_id: dict[str, DriveItem] = {}
         incomplete = False
         for _ in range(page_budget):
+            # Never `corpora=drive` with a `driveId`: that addresses the drive
+            # itself, which Drive allows only to a *member* of it. An identity
+            # granted one folder inside a Shared Drive gets 403
+            # `teamDriveMembershipRequired` — measured with no parent filter, and
+            # again with the 59-parent filter a search sends. The `user` corpus
+            # with `includeItemsFromAllDrives` answered every query identically
+            # for a member and for that grantee (ADR 0010). The Shared Drive ID is
+            # still asserted on every item, by `DriveLocation.contains`.
             list_arguments: dict[str, Any] = {
-                "corpora": "drive" if self._location.kind is DriveKind.SHARED_DRIVE else "user",
+                "corpora": "user",
                 "includeItemsFromAllDrives": self._location.kind is DriveKind.SHARED_DRIVE,
             }
-            if self._location.shared_drive_id is not None:
-                list_arguments["driveId"] = self._location.shared_drive_id
             if order_by is not None:
                 list_arguments["orderBy"] = order_by
 
@@ -296,7 +320,12 @@ class GoogleDriveGateway:
                 )
             page_token = str(raw_page_token)
 
-        return SearchPage(items=list(items_by_id.values()), incomplete=True, has_more=True)
+        return SearchPage(
+            items=list(items_by_id.values()),
+            incomplete=True,
+            has_more=True,
+            page_budget_exhausted=True,
+        )
 
     async def _execute(self, request: Any, http: _PerThreadHttp) -> Any:
         return await asyncio.to_thread(_execute_sync, request, http)
@@ -384,9 +413,18 @@ def _require_complete(page: SearchPage, what: str) -> None:
     outgrew the budget needs an operator rather than a quietly shrinking view.
     """
 
-    if page.incomplete:
+    if page.page_budget_exhausted:
         raise EnumerationBudgetExceeded(
-            f"{what} did not complete within {FOLDER_PAGE_BUDGET} pages"
+            f"{what} did not complete within {FOLDER_PAGE_BUDGET} pages: the identity "
+            f"can see more than {FOLDER_PAGE_BUDGET * PAGE_SIZE:,} folders"
+        )
+    if page.incomplete:
+        # Drive's own flag, on a walk that finished its pages. Under the `user`
+        # corpus with items from all drives, Drive searches several stores and
+        # may give up on one in time; the next attempt usually completes.
+        raise EnumerationBudgetExceeded(
+            f"{what} was reported incomplete by Drive (incompleteSearch): part of what "
+            "the identity can see was not searched. Usually transient; run it again"
         )
 
 

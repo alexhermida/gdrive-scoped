@@ -10,13 +10,14 @@ These constraints are part of the design, not incidental implementation details.
 - `parents` is represented as a list, although current Drive items support one parent. Treat zero or multiple parents as unproven ancestry and fail closed.
 - Shortcuts can point outside the Authorized Subtree. Every shortcut is excluded, and a shortcut target is never requested or followed.
 - A cached discovery result is not authorization on its own. The item under authorization is always re-read from Drive; only the chain above it may come from the folder map, and that reuse is bounded by `GDRIVE_FOLDER_MAP_TTL_SECONDS` (ADR 0005).
-- One `mimeType = folder` query returns every folder in the location, so a subtree costs one paginated call rather than one call per folder. In a **Shared Drive** that query is bounded by `driveId`. In **My Drive** it enumerates every folder the identity owns, which can be far larger than the corpus - correctness is unaffected, cost is not.
+- One `mimeType = folder` query under the `user` corpus returns every folder the identity can see, so a subtree costs one paginated call per thousand folders rather than one call per folder. It is bounded by the identity's **reach**, not by the corpus or the drive: correctness is unaffected, cost is not. Keep the Drive Identity's grant to the corpus, and read a probe's reach count as the discovery cost (ADR 0010).
 
 ## Shared-drive requests
 
-- Searches must use `corpora=drive` with the exact `driveId`.
-- Set `includeItemsFromAllDrives` and `supportsAllDrives` wherever the Drive method requires them.
-- Omitting a shared-drive flag can produce empty results rather than an obvious error.
+- **Do not use `corpora=drive` with a `driveId`.** It addresses the drive itself, and Drive refuses it with 403 `teamDriveMembershipRequired` for an identity granted a folder *inside* the drive rather than membership — measured with no parent filter and again with a 59-parent search filter. A single-parent filter happened to pass, so the failure is intermittent rather than absent.
+- Use `corpora=user` with `includeItemsFromAllDrives=true` and `supportsAllDrives=true`. Measured to return the same results as `corpora=drive` for a drive member: 453 of 453 folders, and identical listings and search hits.
+- The configured Shared Drive ID is asserted on every item's `driveId`, never sent in the query.
+- Omitting `includeItemsFromAllDrives` or `supportsAllDrives` produces empty results rather than an obvious error.
 
 ## My Drive requests
 

@@ -7,8 +7,9 @@ the same documents rather than whatever the corpus holds by then.
 
 The four numbers answer different questions and are not interchangeable:
 
-- **initialization** enumerates every folder in the Drive Location, not just
-  the corpus. It is what a cold process pays before its first answer.
+- **initialization** validates the root and enumerates every folder the Drive
+  Identity can see, keeping the corpus. It is what a cold process pays before
+  its first answer, and it grows with the identity's reach, not the corpus.
 - **search** is one `files.list` per batch of parent folders, then a merge by
   rank. It never touches document content.
 - **cold read** is download-or-export plus extraction, dominated by the file's
@@ -41,7 +42,7 @@ from gdrive_scoped.bench.evaluation import (
     load_cases,
     save_cases,
 )
-from gdrive_scoped.drive import DriveGateway, create_gateway
+from gdrive_scoped.drive import DriveGateway, GoogleDriveGateway, create_gateway
 from gdrive_scoped.env import Settings, credentials_from_environ
 from gdrive_scoped.scope import ScopedDrive
 
@@ -186,13 +187,24 @@ def _case_count(value: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     options = parse_args(argv)
     settings = Settings.from_environ()
-    execution = asyncio.run(
-        run_benchmark(
-            options, settings, create_gateway(credentials_from_environ(), settings.location)
-        )
-    )
+    gateway = create_gateway(credentials_from_environ(), settings.location)
+    execution = asyncio.run(_run_as_named_identity(options, settings, gateway))
     _print_summary(execution, options.output_path)
     return execution.exit_code
+
+
+async def _run_as_named_identity(
+    options: BenchmarkOptions, settings: Settings, gateway: GoogleDriveGateway
+) -> BenchmarkExecution:
+    """Say who is measuring before measuring.
+
+    A credential carries no name, and a benchmark run as the developer instead
+    of the bot user enumerates a different reach and times a deployment that
+    does not exist. The line is the only thing in the output that would say so.
+    """
+
+    print(f"identity: {await gateway.identity()}")
+    return await run_benchmark(options, settings, gateway)
 
 
 def _print_summary(execution: BenchmarkExecution, output_path: Path) -> None:
