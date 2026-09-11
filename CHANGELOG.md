@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 — a folder grant is enough
 
 - Shared Drive queries use `corpora=user` with `includeItemsFromAllDrives`, and never a
   `driveId`. `corpora=drive` addresses the drive itself and Drive refuses it — 403
@@ -23,6 +23,9 @@
   under the `user` corpus and worth one retry). It used to report both as the budget, which
   sent a reader hunting for a reach that was not there. `SearchPage` gains
   `page_budget_exhausted`.
+- `.env.example` lists every variable the entry points read, with its constraints, and `just`
+  loads `.env` on its own. An entry point run directly with `uv run` still needs them
+  exported.
 - The benchmark derives its own cases when the cases file does not exist, and writes them
   there: the largest readable document of each MIME type, each verified to come back from a
   search for a keyword taken from its own name. A first run against an unfamiliar corpus now

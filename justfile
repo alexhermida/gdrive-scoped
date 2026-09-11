@@ -1,3 +1,7 @@
+# Loads .env from this directory into every recipe. A variable already exported
+# in the shell wins, so an explicit override still works. `.env.example` lists them.
+set dotenv-load := true
+
 evaluation_file := env_var_or_default("EVALUATION_FILE", "evaluation/questions.local.json")
 benchmark_output := env_var_or_default("BENCHMARK_OUTPUT", "_tmp/benchmark.json")
 benchmark_iterations := env_var_or_default("BENCHMARK_ITERATIONS", "5")

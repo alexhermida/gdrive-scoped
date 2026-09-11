@@ -68,8 +68,9 @@ The default suite is hermetic and never contacts Google Drive.
 
 ## Running against a real Drive
 
-Everything below needs one Drive corpus described in the environment. These variables are read
-only by this repository's own entry points (`gdrive_scoped.env`), never by the library:
+Everything below needs one Drive corpus described in the environment: copy `.env.example` to
+`.env` (git-ignored) and fill it in. These variables are read only by this repository's own
+entry points (`gdrive_scoped.env`), never by the library:
 
 | Variable | |
 | --- | --- |
@@ -94,9 +95,10 @@ Every entry point prints `identity: <address>` before anything else. A credentia
 name, and the two identities describe different deployments: the bot user's reach is the
 corpus, a developer's is everything they can see — and discovery enumerates that reach. The
 census that costs the bot user one page cost one developer identity 9,878 folders in 10
-pages and 13 s. `just` does not load `.env`, so export the variables into the shell
-(`set -a; source .env; set +a`); with no `GDRIVE_OAUTH_*` set, the entry points fall back to
-Application Default Credentials, and the identity line is what tells you.
+pages and 13 s. `just` loads `.env` on its own, and a variable already exported in the shell
+wins; an entry point run directly with `uv run` needs them exported first (`set -a; source
+.env; set +a`). With no `GDRIVE_OAUTH_*` set, the entry points fall back to Application
+Default Credentials, and the identity line is what tells you.
 
 ### What is in the corpus
 
