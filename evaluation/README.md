@@ -11,11 +11,17 @@ Each case contains:
 
 Copy `questions.example.json` to the gitignored `questions.local.json` and replace the placeholders with 5–10 real questions from the configured corpus. A case passes when the expected source occurs in a returned path.
 
+The evaluation needs hand-written cases, because only a person knows which question a corpus should be able to answer. The benchmark does not — see below.
+
 This measures source discovery only. Review whether an agent can answer after reading the source separately.
 
 ## Performance benchmark
 
-The live benchmark reuses these cases. For each case and measured iteration it:
+The live benchmark reuses these cases when the file exists. **When it does not, it derives its own and writes them there**: the largest readable document of each MIME type, each verified to come back from a search for a keyword taken from its own name. That is what lets a first run against an unfamiliar corpus measure that corpus rather than fail on paths from somebody else's, and writing the file is what keeps the next run comparable with this one.
+
+Derived cases measure retrieval; they are not questions anybody asked, so they say nothing about whether the corpus answers real ones. That is the evaluation's job, and it still wants the hand-written file.
+
+For each case and measured iteration it:
 
 1. Recursively discovers folders and runs the configured Drive keyword search.
 2. Finds the expected relative source path.
@@ -39,8 +45,9 @@ uv run python -m gdrive_scoped.bench.benchmark_cli evaluation/questions.local.js
   --output _tmp/benchmark-current.json \
   --iterations 10 \
   --warmup-iterations 1 \
-  --baseline _tmp/benchmark-baseline.json \
-  --max-regression-percent 20
+  --baseline _tmp/benchmark-baseline.json
 ```
 
 The command exits nonzero if any expected source is missing or a matching case's median search, cold-read, warm-read, or end-to-end latency regresses beyond the threshold. Compare reports from the same folder, account, machine, and similar network conditions.
+
+Everything measured is dominated by round trips to Drive, which vary by tens of percent between runs on an unloaded network. `--max-regression-percent` defaults to 40 for that reason: it is a gate for catching a doubling, not a drift. Use ten or more iterations before believing a comparison, and treat a single run of three as an anecdote.

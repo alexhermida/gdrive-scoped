@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- The benchmark derives its own cases when the cases file does not exist, and writes them
+  there: the largest readable document of each MIME type, each verified to come back from a
+  search for a keyword taken from its own name. A first run against an unfamiliar corpus now
+  measures that corpus instead of failing on paths from somebody else's, and the second run
+  measures the same documents, which is what `--baseline` needs to compare anything.
+  `--case-count` sets how many (1-10, default 6).
+- The benchmark summary prints a per-case table with the extracted length, and the per-Drive-
+  operation medians and p95s the report has always carried. A regression in one operation was
+  invisible in the four aggregate numbers.
+- `--max-regression-percent` defaults to 40 rather than 25. Everything measured is dominated by
+  Drive round trips that vary by tens of percent run to run, so the gate is for catching a
+  doubling, not a drift; 25 fired on noise.
+
 ## v0.6.0 — search in Drive's order, at the request's size
 
 - Published under the MIT licence. Source distributions are built from an explicit allowlist

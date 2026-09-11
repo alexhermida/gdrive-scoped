@@ -12,7 +12,7 @@ from gdrive_scoped.bench.benchmark import (
     save_benchmark_report,
 )
 from gdrive_scoped.bench.benchmark_cli import BenchmarkOptions, run_benchmark
-from gdrive_scoped.bench.evaluation import EvaluationCase
+from gdrive_scoped.bench.evaluation import EvaluationCase, load_cases, save_cases
 from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveItem, SearchPage
 from gdrive_scoped.env import Settings
 from gdrive_scoped.location import DriveKind, DriveLocation
@@ -251,3 +251,86 @@ async def test_benchmark_command_writes_a_successful_live_report(tmp_path: Path)
 
     assert regressed.exit_code == 1
     assert "search" in [regression.metric for regression in regressed.regressions]
+
+
+@pytest.mark.anyio
+async def test_benchmark_command_derives_and_keeps_its_cases_when_the_file_is_absent(
+    tmp_path: Path,
+) -> None:
+    cases_path = tmp_path / "derived" / "cases.json"
+    options = BenchmarkOptions(
+        cases_path=cases_path,
+        output_path=tmp_path / "benchmark.json",
+        iterations=1,
+        warmup_iterations=0,
+        read_max_chars=100,
+    )
+    settings = Settings(
+        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
+        root_folder_id="root",
+    )
+
+    execution = await run_benchmark(options, settings, BenchmarkGateway())
+
+    assert execution.exit_code == 0
+    assert [case.expected_source for case in execution.report.cases] == ["Plans/Timeline.md"]
+    # Written, so the next run measures the same documents rather than
+    # re-deriving them from a corpus that has moved on.
+    assert [case.expected_source for case in load_cases(cases_path)] == ["Plans/Timeline.md"]
+    assert execution.derived_cases_path == cases_path
+
+
+@pytest.mark.anyio
+async def test_benchmark_command_reuses_an_existing_cases_file_without_deriving(
+    tmp_path: Path,
+) -> None:
+    cases_path = tmp_path / "cases.json"
+    save_cases(
+        [
+            EvaluationCase(
+                question="When is the project due?",
+                search_query="project timeline",
+                expected_source="Timeline.md",
+            )
+        ],
+        cases_path,
+    )
+    options = BenchmarkOptions(
+        cases_path=cases_path,
+        output_path=tmp_path / "benchmark.json",
+        iterations=1,
+        warmup_iterations=0,
+        read_max_chars=100,
+    )
+    settings = Settings(
+        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
+        root_folder_id="root",
+    )
+
+    execution = await run_benchmark(options, settings, BenchmarkGateway())
+
+    assert [case.search_query for case in execution.report.cases] == ["project timeline"]
+    assert execution.derived_cases_path is None
+
+
+@pytest.mark.anyio
+async def test_benchmark_command_says_so_when_no_case_can_be_derived(tmp_path: Path) -> None:
+    class FindsNothingGateway(BenchmarkGateway):
+        async def search_items(
+            self, parent_ids: tuple[str, ...], keywords: str, limit: int = 1000
+        ) -> SearchPage:
+            return SearchPage(items=[])
+
+    options = BenchmarkOptions(
+        cases_path=tmp_path / "cases.json",
+        output_path=tmp_path / "benchmark.json",
+        iterations=1,
+        warmup_iterations=0,
+    )
+    settings = Settings(
+        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
+        root_folder_id="root",
+    )
+
+    with pytest.raises(ValueError, match="Could not derive"):
+        await run_benchmark(options, settings, FindsNothingGateway())

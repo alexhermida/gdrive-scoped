@@ -117,7 +117,7 @@ just evaluate     # do the expected sources come back at all
 just benchmark    # how long search and reads take, with a regression gate
 ```
 
-Both read the same 5–10 hand-written cases; see `evaluation/README.md`.
+Both read the same 5–10 cases. The evaluation needs them hand-written — only a person knows what a corpus should be able to answer. The benchmark derives its own when the file is absent, one readable document per MIME type, each verified findable, so it runs against a corpus nobody has written cases for yet. See `evaluation/README.md`.
 
 ### The example server
 
