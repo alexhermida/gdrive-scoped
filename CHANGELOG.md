@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.1 — four edges closed
 
 - `GDRIVE_FOLDER_MAP_TTL_SECONDS` must be finite. `float()` accepted `inf` and `nan`, and an
   infinite window never refreshed the folder map: a folder moved out of the corpus would have
