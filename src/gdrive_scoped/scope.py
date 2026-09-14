@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections import deque
 from collections.abc import Callable
@@ -69,10 +70,16 @@ class SearchResult:
 
 @dataclass(frozen=True, slots=True)
 class AuthorizedItem:
-    """One item whose membership was proven, ready to be read without re-proving it."""
+    """One item whose membership was proven, ready to be read without re-proving it.
+
+    Bound to the scope that proved it. `download` accepts a proof only from the
+    scope that issued it, so one made under another root, or assembled by hand,
+    cannot carry an ID past this scope's boundary.
+    """
 
     item: DriveItem
     relative_path: str
+    scope: ScopedDrive = field(repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -91,6 +98,23 @@ class ScopedDrive:
     #: just did, and their map is newer than the one I rejected".
     _folder_map_generation: int = field(default=0, init=False, repr=False)
     _refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Drive resolves the alias `root` to the whole of a My Drive, and the
+        # root read below would then key the folder map on the real ID: every
+        # listing, search and read would succeed against the entire Drive.
+        if self.root_folder_id == "root":
+            raise ValueError(
+                "root_folder_id must be a folder ID, not the alias 'root'. "
+                "The whole of a Drive is not a corpus."
+            )
+        # float() accepts inf and nan. An infinite window never refreshes the
+        # folder map, so a folder moved out of the corpus would keep serving its
+        # contents for the life of the process; nan is no policy at all.
+        if not math.isfinite(self.folder_map_ttl_seconds) or self.folder_map_ttl_seconds < 0:
+            raise ValueError(
+                "folder_map_ttl_seconds must be finite and not negative; 0 closes the window"
+            )
 
     async def initialize(self) -> DriveItem:
         """Validate and return the Configured Root Folder."""
@@ -196,11 +220,15 @@ class ScopedDrive:
             raise ScopeViolation("Folders do not have readable document content")
         if not item.can_download:
             raise ScopeViolation("Drive does not permit downloading this item")
-        return AuthorizedItem(item=item, relative_path=relative_path)
+        return AuthorizedItem(item=item, relative_path=relative_path, scope=self)
 
     async def download(self, authorized: AuthorizedItem, export_mime_type: str | None) -> bytes:
-        """Fetch bytes for an item authorized earlier in this same request."""
+        """Fetch bytes for an item authorized earlier in this same request, by this scope."""
 
+        if authorized.scope is not self:
+            _refuse(
+                authorized.item.id, "foreign_proof", "Authorization was not issued by this scope"
+            )
         if export_mime_type is None:
             return await self.gateway.download_item(authorized.item.id)
         return await self.gateway.export_item(authorized.item.id, export_mime_type)
@@ -242,6 +270,10 @@ class ScopedDrive:
         """Re-read the root itself. Not audited: it is not a caller's decision."""
 
         root = await self.gateway.get_item(self.root_folder_id)
+        if root.id != self.root_folder_id:
+            # Drive answered for something else: an alias resolved, or an ID that
+            # does not name the folder it claims to. Nothing built on it can be trusted.
+            _refuse(self.root_folder_id, "root_mismatch", "Drive returned unexpected root metadata")
         self._check_live_item(root)
         if root.mime_type != FOLDER_MIME_TYPE:
             _refuse(self.root_folder_id, "root_not_a_folder", "Configured root is not a folder")

@@ -6,12 +6,13 @@ from pathlib import Path
 import pytest
 
 from gdrive_scoped.bench.benchmark import (
+    BenchmarkReport,
     RetrievalBenchmark,
     compare_benchmarks,
     load_benchmark_report,
     save_benchmark_report,
 )
-from gdrive_scoped.bench.benchmark_cli import BenchmarkOptions, run_benchmark
+from gdrive_scoped.bench.benchmark_cli import BenchmarkOptions, parse_args, run_benchmark
 from gdrive_scoped.bench.evaluation import EvaluationCase, load_cases, save_cases
 from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveItem, SearchPage
 from gdrive_scoped.env import Settings
@@ -20,8 +21,10 @@ from gdrive_scoped.location import DriveKind, DriveLocation
 
 class BenchmarkGateway:
     def __init__(self) -> None:
-        self.root = DriveItem("root", "Corpus", FOLDER_MIME_TYPE, "drive")
-        self.folder = DriveItem("folder", "Plans", FOLDER_MIME_TYPE, "drive", parents=("root",))
+        self.root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
+        self.folder = DriveItem(
+            "folder", "Plans", FOLDER_MIME_TYPE, "drive", parents=("root-folder",)
+        )
         self.document = DriveItem(
             "document",
             "Timeline.md",
@@ -65,7 +68,7 @@ async def test_benchmark_measures_search_and_cold_and_warm_document_reads() -> N
     benchmark = RetrievalBenchmark(
         gateway=gateway,
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
     cases = [
         EvaluationCase(
@@ -100,7 +103,7 @@ async def test_benchmark_comparison_reports_median_latency_regressions() -> None
     benchmark = RetrievalBenchmark(
         gateway=BenchmarkGateway(),
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
     cases = [
         EvaluationCase(
@@ -142,10 +145,50 @@ async def test_benchmark_comparison_reports_median_latency_regressions() -> None
 async def test_benchmark_comparison_refuses_a_baseline_that_measured_something_else(
     field: str, value: object, message: str
 ) -> None:
+    report = await _timeline_report()
+    baseline = report.model_copy(update={field: value})
+
+    with pytest.raises(ValueError, match=message):
+        compare_benchmarks(report, baseline, max_regression_percent=20)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("threshold", [float("inf"), float("nan"), -1.0])
+async def test_benchmark_comparison_requires_a_threshold_that_can_close_the_gate(
+    threshold: float,
+) -> None:
+    """nan compares false with every regression and inf is never exceeded: the
+    gate reported holding without ever closing."""
+    report = await _timeline_report()
+
+    with pytest.raises(ValueError, match="finite and not negative"):
+        compare_benchmarks(report, report, max_regression_percent=threshold)
+
+
+@pytest.mark.parametrize("value", ["inf", "nan", "-1"])
+def test_benchmark_command_rejects_a_threshold_that_cannot_close_the_gate(value: str) -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--max-regression-percent", value])
+
+
+@pytest.mark.anyio
+async def test_benchmark_comparison_refuses_reports_that_measure_different_cases() -> None:
+    """Comparing the overlap let an added or renamed case pass the gate without
+    being measured against anything, and no overlap at all passed it vacuously."""
+    report = await _timeline_report()
+    nothing = report.model_copy(update={"cases": []})
+
+    with pytest.raises(ValueError, match="different cases .*project timeline"):
+        compare_benchmarks(report, nothing, max_regression_percent=20)
+    with pytest.raises(ValueError, match="different cases"):
+        compare_benchmarks(nothing, report, max_regression_percent=20)
+
+
+async def _timeline_report() -> BenchmarkReport:
     benchmark = RetrievalBenchmark(
         gateway=BenchmarkGateway(),
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
     cases = [
         EvaluationCase(
@@ -154,11 +197,7 @@ async def test_benchmark_comparison_refuses_a_baseline_that_measured_something_e
             expected_source="Timeline.md",
         )
     ]
-    report = await benchmark.run(cases, iterations=1, warmup_iterations=0)
-    baseline = report.model_copy(update={field: value})
-
-    with pytest.raises(ValueError, match=message):
-        compare_benchmarks(report, baseline, max_regression_percent=20)
+    return await benchmark.run(cases, iterations=1, warmup_iterations=0)
 
 
 @pytest.mark.anyio
@@ -167,7 +206,7 @@ async def test_benchmark_reports_missing_sources_without_timing_a_different_docu
     benchmark = RetrievalBenchmark(
         gateway=gateway,
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
     cases = [
         EvaluationCase(
@@ -192,7 +231,7 @@ async def test_benchmark_excludes_warmup_drive_calls_from_measured_totals() -> N
     benchmark = RetrievalBenchmark(
         gateway=gateway,
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
     cases = [
         EvaluationCase(
@@ -213,7 +252,7 @@ async def test_benchmark_report_round_trips_as_a_json_artifact(tmp_path: Path) -
     benchmark = RetrievalBenchmark(
         gateway=BenchmarkGateway(),
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
     cases = [
         EvaluationCase(
@@ -253,7 +292,7 @@ async def test_benchmark_command_writes_a_successful_live_report(tmp_path: Path)
     )
     settings = Settings(
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
 
     execution = await run_benchmark(options, settings, BenchmarkGateway())
@@ -298,7 +337,7 @@ async def test_benchmark_command_derives_and_keeps_its_cases_when_the_file_is_ab
     )
     settings = Settings(
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
 
     execution = await run_benchmark(options, settings, BenchmarkGateway())
@@ -335,7 +374,7 @@ async def test_benchmark_command_reuses_an_existing_cases_file_without_deriving(
     )
     settings = Settings(
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
 
     execution = await run_benchmark(options, settings, BenchmarkGateway())
@@ -360,7 +399,7 @@ async def test_benchmark_command_says_so_when_no_case_can_be_derived(tmp_path: P
     )
     settings = Settings(
         location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-        root_folder_id="root",
+        root_folder_id="root-folder",
     )
 
     with pytest.raises(ValueError, match="Could not derive"):

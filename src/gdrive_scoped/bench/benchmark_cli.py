@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -81,8 +82,8 @@ async def run_benchmark(
 ) -> BenchmarkExecution:
     """Run, persist, and optionally compare one live benchmark."""
 
-    if options.max_regression_percent < 0:
-        raise ValueError("max_regression_percent must not be negative")
+    if not math.isfinite(options.max_regression_percent) or options.max_regression_percent < 0:
+        raise ValueError("max_regression_percent must be finite and not negative")
     cases, derived_cases_path = await _resolve_cases(options, settings, gateway)
     report = await RetrievalBenchmark(
         gateway=gateway,
@@ -160,7 +161,7 @@ def parse_args(argv: list[str] | None = None) -> BenchmarkOptions:
     parser.add_argument("--warmup-iterations", type=int, default=1)
     parser.add_argument("--read-max-chars", type=int, default=25_000)
     parser.add_argument("--baseline", dest="baseline_path", type=Path)
-    parser.add_argument("--max-regression-percent", type=float, default=40.0)
+    parser.add_argument("--max-regression-percent", type=_regression_percent, default=40.0)
     parser.add_argument(
         "--case-count",
         type=_case_count,
@@ -182,6 +183,16 @@ def _case_count(value: str) -> int:
     if not 1 <= count <= MAX_CASES:
         raise argparse.ArgumentTypeError(f"must be between 1 and {MAX_CASES}")
     return count
+
+
+def _regression_percent(value: str) -> float:
+    """Rejected here rather than after the run: `float()` accepts inf and nan,
+    and either one would report a gate that held without ever closing."""
+
+    percent = float(value)
+    if not math.isfinite(percent) or percent < 0:
+        raise argparse.ArgumentTypeError("must be a finite, non-negative percentage")
+    return percent
 
 
 def main(argv: list[str] | None = None) -> int:

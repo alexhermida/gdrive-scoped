@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- `ScopedDrive` refuses the alias `root` as its root folder, as the environment wrapper
+  already did. Drive resolves the alias to the whole of a My Drive and the folder map was then
+  keyed on the real ID, so every listing, search and read succeeded against the entire Drive;
+  only the optional `initialize()` noticed. The root read now also refuses an answer whose ID
+  is not the one asked for, which closes any other alias the same way.
+- `ScopedDrive` requires a finite, non-negative folder-map TTL. Constructed directly with
+  `inf`, the map never refreshed.
+- An `AuthorizedItem` is bound to the scope that issued it, and `download` refuses one from any
+  other. A proof made under another root, or assembled by hand, no longer carries an ID past
+  this scope's boundary.
+- `compare_benchmarks` and `--max-regression-percent` require a finite, non-negative
+  threshold. `nan` compared false with every regression and `inf` was never exceeded, so the
+  gate reported holding without ever closing.
+- `compare_benchmarks` refuses reports that measure different cases instead of comparing the
+  overlap. An added or renamed case used to pass the gate unmeasured, and no overlap at all
+  passed it vacuously.
+
 ## v0.7.1 — four edges closed
 
 - `GDRIVE_FOLDER_MAP_TTL_SECONDS` must be finite. `float()` accepted `inf` and `nan`, and an

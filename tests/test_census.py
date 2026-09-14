@@ -65,14 +65,14 @@ def corpus() -> tuple[ScopedDrive, CountingGateway]:
     """`root/Plans/Archive` holding a readable pair and one unreadable image."""
 
     gateway = CountingGateway(
-        folder("root", "Corpus"),
-        folder("plans", "Plans", "root"),
+        folder("root-folder", "Corpus"),
+        folder("plans", "Plans", "root-folder"),
         folder("archive", "Archive", "plans"),
-        document("a", "Notes.md", "text/markdown", "root"),
+        document("a", "Notes.md", "text/markdown", "root-folder"),
         document("b", "Budget.md", "text/markdown", "plans"),
         document("c", "Scan.png", "image/png", "archive"),
     )
-    return ScopedDrive(gateway, SHARED_DRIVE, "root"), gateway
+    return ScopedDrive(gateway, SHARED_DRIVE, "root-folder"), gateway
 
 
 @pytest.mark.anyio

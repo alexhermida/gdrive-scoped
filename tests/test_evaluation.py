@@ -19,19 +19,19 @@ from gdrive_scoped.scope import ScopedDrive
 
 class EvaluationGateway:
     def __init__(self) -> None:
-        self.root = DriveItem("root", "Corpus", FOLDER_MIME_TYPE, "drive")
+        self.root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
         self.source = DriveItem(
-            "source", "Timeline.md", "text/markdown", "drive", parents=("root",)
+            "source", "Timeline.md", "text/markdown", "drive", parents=("root-folder",)
         )
 
     async def get_item(self, item_id: str) -> DriveItem:
-        return {"root": self.root, "source": self.source}[item_id]
+        return {"root-folder": self.root, "source": self.source}[item_id]
 
     async def list_folders(self) -> list[DriveItem]:
         return [self.root]
 
     async def list_children(self, folder_id: str) -> list[DriveItem]:
-        return [self.source] if folder_id == "root" else []
+        return [self.source] if folder_id == "root-folder" else []
 
     async def list_descendants(self, parent_ids: tuple[str, ...]) -> list[DriveItem]:
         # The same query without the keyword clause, which is what it is.
@@ -69,7 +69,7 @@ async def test_evaluation_reports_source_discovery_without_grading_answers() -> 
         ScopedDrive(
             EvaluationGateway(),
             DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-            "root",
+            "root-folder",
         )
     )
     cases = [
@@ -93,20 +93,24 @@ class DerivationGateway:
     """
 
     def __init__(self) -> None:
-        self.root = DriveItem("root", "Corpus", FOLDER_MIME_TYPE, "drive")
-        self.folder = DriveItem("folder", "Plans", FOLDER_MIME_TYPE, "drive", parents=("root",))
+        self.root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
+        self.folder = DriveItem(
+            "folder", "Plans", FOLDER_MIME_TYPE, "drive", parents=("root-folder",)
+        )
         self.documents = [
-            DriveItem("archive", "Backups.zip", "application/zip", "drive", ("root",), size=9_000),
             DriveItem(
-                "appendix", "Appendix.pdf", "application/pdf", "drive", ("root",), size=5_000
+                "archive", "Backups.zip", "application/zip", "drive", ("root-folder",), size=9_000
+            ),
+            DriveItem(
+                "appendix", "Appendix.pdf", "application/pdf", "drive", ("root-folder",), size=5_000
             ),
             DriveItem("timeline", "Timeline.md", "text/markdown", "drive", ("folder",), size=900),
             DriveItem("roadmap", "Roadmap.md", "text/markdown", "drive", ("folder",), size=100),
-            DriveItem("budget", "Budget.csv", "text/csv", "drive", ("root",), size=500),
+            DriveItem("budget", "Budget.csv", "text/csv", "drive", ("root-folder",), size=500),
         ]
 
     async def get_item(self, item_id: str) -> DriveItem:
-        folders = {"root": self.root, "folder": self.folder}
+        folders = {"root-folder": self.root, "folder": self.folder}
         return folders.get(item_id) or next(
             document for document in self.documents if document.id == item_id
         )
@@ -142,7 +146,9 @@ class DerivationGateway:
 
 
 def _derivation_drive() -> ScopedDrive:
-    return ScopedDrive(DerivationGateway(), DriveLocation(DriveKind.SHARED_DRIVE, "drive"), "root")
+    return ScopedDrive(
+        DerivationGateway(), DriveLocation(DriveKind.SHARED_DRIVE, "drive"), "root-folder"
+    )
 
 
 @pytest.mark.anyio

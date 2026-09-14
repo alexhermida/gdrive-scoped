@@ -561,3 +561,57 @@ async def test_a_decision_names_the_caller_when_the_adapter_says_who(
 
     (record,) = [entry for entry in caplog.records if entry.name == "gdrive_scoped.audit"]
     assert getattr(record, "caller", None) == "alice@example.org"
+
+
+@pytest.mark.parametrize("ttl", [float("inf"), float("nan"), -1.0])
+def test_the_folder_map_window_must_be_finite_and_not_negative(ttl: float) -> None:
+    """Constructed directly, `inf` slipped past the environment wrapper's check:
+    the map never refreshed, and a folder moved out of the corpus kept serving
+    its files for the life of the process."""
+    root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
+
+    with pytest.raises(ValueError, match="finite and not negative"):
+        ScopedDrive(RootGateway(root), SHARED_DRIVE, "root-1", folder_map_ttl_seconds=ttl)
+
+
+def test_the_root_alias_is_refused_before_drive_can_resolve_it() -> None:
+    """Drive resolves `root` to the whole of a My Drive. Only `initialize()`
+    noticed, and it is optional: the root read keyed the folder map on the real
+    ID and every listing, search and read succeeded against the entire Drive."""
+    root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
+
+    with pytest.raises(ValueError, match="not the alias 'root'"):
+        ScopedDrive(RootGateway(root), MY_DRIVE, "root")
+
+
+class ResolvingGateway(RootGateway):
+    """Answers a root read with the same item whatever ID was asked for, which
+    is what Drive does with an alias."""
+
+    async def get_item(self, item_id: str) -> DriveItem:
+        return self._root
+
+
+@pytest.mark.anyio
+async def test_a_root_read_answered_with_a_different_item_is_refused() -> None:
+    real_root = DriveItem("real-root", "Everything", FOLDER_MIME_TYPE, "drive-1")
+    scoped_drive = ScopedDrive(ResolvingGateway(real_root), SHARED_DRIVE, "some-alias")
+
+    with pytest.raises(ScopeViolation, match="unexpected root metadata"):
+        await scoped_drive.list_folder()
+    with pytest.raises(ScopeViolation, match="unexpected root metadata"):
+        await scoped_drive.search("anything", limit=5)
+
+
+@pytest.mark.anyio
+async def test_a_proof_is_only_good_for_the_scope_that_issued_it() -> None:
+    """Two scopes over the same corpus: a proof from one is not a proof for the
+    other, so one cannot be carried across roots or assembled by hand."""
+    gateway, _, budget = _corpus_with_a_nested_folder()
+    issuing = ScopedDrive(gateway, SHARED_DRIVE, "root-1")
+    other = ScopedDrive(gateway, SHARED_DRIVE, "root-1")
+    authorized = await issuing.authorize_document(budget.id)
+
+    assert await issuing.download(authorized, None) == b"content"
+    with pytest.raises(ScopeViolation, match="not issued by this scope"):
+        await other.download(authorized, None)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -266,8 +267,10 @@ def compare_benchmarks(
 ) -> list[BenchmarkRegression]:
     """Return median latency regressions above the allowed percentage."""
 
-    if max_regression_percent < 0:
-        raise ValueError("max_regression_percent must not be negative")
+    if not math.isfinite(max_regression_percent) or max_regression_percent < 0:
+        # nan compares false with every regression and inf is never exceeded:
+        # either one leaves the gate open while reporting that it held.
+        raise ValueError("max_regression_percent must be finite and not negative")
     if current.schema_version != baseline.schema_version:
         raise ValueError("Benchmark reports use different schema versions")
     if (
@@ -281,20 +284,19 @@ def compare_benchmarks(
         raise ValueError("Benchmark reports were measured with different read_max_chars")
     if current.folder_map_ttl_seconds != baseline.folder_map_ttl_seconds:
         raise ValueError("Benchmark reports were measured with different folder_map_ttl_seconds")
-    baseline_by_case = {
-        (case.question, case.search_query, case.expected_source): case for case in baseline.cases
-    }
+    baseline_by_case = {_case_key(case): case for case in baseline.cases}
+    # A case on one side only is a mismatch, not a skip. Comparing the overlap
+    # would let an added or renamed case pass the gate without being measured
+    # against anything, and no overlap at all would pass it vacuously.
+    unmatched = {_case_key(case) for case in current.cases} ^ set(baseline_by_case)
+    if unmatched:
+        queries = ", ".join(sorted(search_query for _, search_query, _ in unmatched))
+        raise ValueError(
+            f"Benchmark reports measure different cases ({queries}); record a new baseline"
+        )
     regressions: list[BenchmarkRegression] = []
     for current_case in current.cases:
-        baseline_case = baseline_by_case.get(
-            (
-                current_case.question,
-                current_case.search_query,
-                current_case.expected_source,
-            )
-        )
-        if baseline_case is None:
-            continue
+        baseline_case = baseline_by_case[_case_key(current_case)]
         metrics = (
             ("search", current_case.search, baseline_case.search),
             ("cold_read", current_case.cold_read, baseline_case.cold_read),
@@ -318,6 +320,10 @@ def compare_benchmarks(
                     )
                 )
     return regressions
+
+
+def _case_key(case: CaseBenchmark) -> tuple[str, str, str]:
+    return (case.question, case.search_query, case.expected_source)
 
 
 def save_benchmark_report(report: BenchmarkReport, path: Path) -> None:
