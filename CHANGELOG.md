@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- `GDRIVE_FOLDER_MAP_TTL_SECONDS` must be finite. `float()` accepted `inf` and `nan`, and an
+  infinite window never refreshed the folder map: a folder moved out of the corpus would have
+  kept serving its contents for the life of the process.
+- The evaluation script prints `identity: <address>` first, as the census and the benchmark
+  already did and the README already promised of every entry point.
+- `compare_benchmarks` refuses a baseline measured with a different `read_max_chars` or
+  `folder_map_ttl_seconds`, as it already refused a different corpus. The report recorded
+  both because they change what the numbers mean, and then compared without checking them.
+- A negative folder cursor is rejected as invalid. It used to pass the bounds check and page
+  from the end of the listing.
+
 ## v0.7.0 — a folder grant is enough
 
 - Shared Drive queries use `corpora=user` with `includeItemsFromAllDrives`, and never a

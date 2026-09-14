@@ -14,6 +14,7 @@ single environment file serves both a hosted provider and a local run.
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -141,6 +142,12 @@ def _read_folder_map_ttl(values: Mapping[str, str]) -> float:
         ttl_seconds = float(raw_ttl)
     except ValueError as error:
         raise ConfigurationError(f"Invalid {FOLDER_MAP_TTL_ENV}: expected seconds") from error
+    # float() also parses "inf" and "nan". An infinite window never refreshes the
+    # folder map, so a folder moved out of the corpus would keep serving its
+    # contents for the life of the process; nan compares false with everything
+    # and is no policy at all.
+    if not math.isfinite(ttl_seconds):
+        raise ConfigurationError(f"Invalid {FOLDER_MAP_TTL_ENV}: must be finite")
     if ttl_seconds < 0:
         raise ConfigurationError(f"Invalid {FOLDER_MAP_TTL_ENV}: must not be negative")
     return ttl_seconds

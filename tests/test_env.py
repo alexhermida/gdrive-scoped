@@ -63,6 +63,9 @@ def test_configuration_loads_one_my_drive_root() -> None:
         (SHARED | {"GDRIVE_ROOT_FOLDER_ID": "root"}, "not the alias 'root'"),
         (SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "soon"}, "expected seconds"),
         (SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "-1"}, "must not be negative"),
+        # float() accepts both; an infinite window would never refresh the folder map.
+        (SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "inf"}, "must be finite"),
+        (SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "nan"}, "must be finite"),
     ],
 )
 def test_configuration_fails_closed(environ: dict[str, str], message: str) -> None:

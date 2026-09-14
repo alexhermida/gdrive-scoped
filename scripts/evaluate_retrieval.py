@@ -16,8 +16,13 @@ from gdrive_scoped.scope import ScopedDrive
 
 async def _evaluate(path: Path) -> int:
     settings = Settings.from_environ()
+    gateway = create_gateway(credentials_from_environ(), settings.location)
+    # Said first, because nothing else in the output would. An evaluation run
+    # as the developer instead of the bot user searches a different reach and
+    # reports sources a deployment would never find.
+    print(f"identity: {await gateway.identity()}")
     scoped_drive = ScopedDrive(
-        gateway=create_gateway(credentials_from_environ(), settings.location),
+        gateway=gateway,
         location=settings.location,
         root_folder_id=settings.root_folder_id,
         folder_map_ttl_seconds=settings.folder_map_ttl_seconds,
