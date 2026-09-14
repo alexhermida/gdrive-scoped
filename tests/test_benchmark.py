@@ -131,6 +131,37 @@ async def test_benchmark_comparison_reports_median_latency_regressions() -> None
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("corpus_fingerprint", "other-root", "different Drive corpora"),
+        ("read_max_chars", 1_000, "different read_max_chars"),
+        ("folder_map_ttl_seconds", 0.0, "different folder_map_ttl_seconds"),
+    ],
+)
+async def test_benchmark_comparison_refuses_a_baseline_that_measured_something_else(
+    field: str, value: object, message: str
+) -> None:
+    benchmark = RetrievalBenchmark(
+        gateway=BenchmarkGateway(),
+        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
+        root_folder_id="root",
+    )
+    cases = [
+        EvaluationCase(
+            question="When is the project due?",
+            search_query="project timeline",
+            expected_source="Timeline.md",
+        )
+    ]
+    report = await benchmark.run(cases, iterations=1, warmup_iterations=0)
+    baseline = report.model_copy(update={field: value})
+
+    with pytest.raises(ValueError, match=message):
+        compare_benchmarks(report, baseline, max_regression_percent=20)
+
+
+@pytest.mark.anyio
 async def test_benchmark_reports_missing_sources_without_timing_a_different_document() -> None:
     gateway = BenchmarkGateway()
     benchmark = RetrievalBenchmark(

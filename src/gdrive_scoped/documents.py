@@ -322,6 +322,11 @@ def _decode_cursor(cursor: str | None) -> int:
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         value = base64.urlsafe_b64decode(padded.encode()).decode()
-        return int(value)
+        offset = int(value)
     except (UnicodeDecodeError, ValueError) as error:
         raise InvalidCursor("Invalid read cursor") from error
+    # This module only ever issues non-negative offsets. Let through, a negative
+    # one is a Python slice bound and pages from the end of the listing.
+    if offset < 0:
+        raise InvalidCursor("Invalid read cursor")
+    return offset

@@ -76,6 +76,8 @@ class BenchmarkReport(BaseModel):
     corpus_fingerprint: str
     iterations: int
     warmup_iterations: int
+    #: Recorded because it changes what the numbers mean: it bounds the read the
+    #: timings include, so a baseline with a different bound timed a different read.
     read_max_chars: int
     #: Recorded because it changes what the numbers mean: a run with a warm folder map
     #: is not comparable to one that re-enumerates on every request.
@@ -273,6 +275,12 @@ def compare_benchmarks(
         or current.corpus_fingerprint != baseline.corpus_fingerprint
     ):
         raise ValueError("Benchmark reports describe different Drive corpora")
+    # Both are recorded because they change what the numbers mean; a baseline that
+    # differs in either would produce a regression, or hide one, out of nothing.
+    if current.read_max_chars != baseline.read_max_chars:
+        raise ValueError("Benchmark reports were measured with different read_max_chars")
+    if current.folder_map_ttl_seconds != baseline.folder_map_ttl_seconds:
+        raise ValueError("Benchmark reports were measured with different folder_map_ttl_seconds")
     baseline_by_case = {
         (case.question, case.search_query, case.expected_source): case for case in baseline.cases
     }

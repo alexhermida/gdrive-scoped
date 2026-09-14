@@ -377,6 +377,19 @@ async def test_reads_prefer_natural_sheet_boundaries() -> None:
 
 
 @pytest.mark.anyio
+async def test_folder_listing_rejects_a_negative_cursor() -> None:
+    root = DriveItem("root", "Corpus", FOLDER_MIME_TYPE, "drive")
+    document = DriveItem("document", "notes.txt", "text/plain", "drive", parents=("root",))
+    service = DocumentService(
+        ScopedDrive(SearchGateway(root, document, search_results=[]), SHARED_DRIVE, "root")
+    )
+
+    # "LTE" is base64 for "-1": as a slice bound it would page from the end.
+    with pytest.raises(InvalidCursor):
+        await service.list_folder(cursor="LTE")
+
+
+@pytest.mark.anyio
 async def test_read_rejects_an_invalid_cursor() -> None:
     root = DriveItem("root", "Corpus", FOLDER_MIME_TYPE, "drive")
     document = DriveItem("document", "notes.txt", "text/plain", "drive", parents=("root",))
