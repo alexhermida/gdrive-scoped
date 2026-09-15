@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from gdrive_scoped.census import PARENT_BATCH_SIZE
 from gdrive_scoped.documents import DocumentService
+from gdrive_scoped.errors import DriveError
 from gdrive_scoped.extractors import ExtractorRegistry
 from gdrive_scoped.scope import ScopedDrive
 
@@ -68,7 +70,7 @@ async def derive_cases(
     wanted: int = DEFAULT_CASE_COUNT,
     extractors: ExtractorRegistry | None = None,
 ) -> list[EvaluationCase]:
-    """The largest readable document of each MIME type, verified findable.
+    """The largest document of each MIME type that is found by a search and reads.
 
     Derived rather than hand-written so a first run against an unfamiliar
     corpus measures *that* corpus, instead of failing on paths that only ever
@@ -77,17 +79,21 @@ async def derive_cases(
 
     The verification is the half that matters. A case whose search returns
     nothing measures a search that found nothing and a read that never
-    happened, which reads as a fast benchmark rather than a broken one.
+    happened, which reads as a fast benchmark rather than a broken one. And an
+    extractor claiming the MIME type is not a read: a scan with no text or a
+    sheet over the export cap would be chosen for its size and abort the
+    benchmark at its first read, so each case is read once before it is kept.
     """
 
     if not 1 <= wanted <= MAX_CASES:
         raise ValueError(f"Derived case count must be between 1 and {MAX_CASES}")
 
     registry = extractors or ExtractorRegistry()
+    service = DocumentService(scoped_drive, extractors=registry)
     folder_paths = await scoped_drive.folder_paths()
     folder_ids = tuple(folder_paths)
 
-    largest_by_type: dict[str, tuple[int, str, str]] = {}
+    candidates_by_type: dict[str, list[_Candidate]] = {}
     for offset in range(0, len(folder_ids), PARENT_BATCH_SIZE):
         batch = folder_ids[offset : offset + PARENT_BATCH_SIZE]
         for item in await scoped_drive.gateway.list_descendants(batch):
@@ -97,29 +103,52 @@ async def derive_cases(
             if folder_path is None:
                 continue
             relative_path = item.name if folder_path == "." else f"{folder_path}/{item.name}"
-            current = largest_by_type.get(item.mime_type)
-            if current is None or (item.size or 0) > current[0]:
-                largest_by_type[item.mime_type] = (item.size or 0, item.name, relative_path)
+            candidates_by_type.setdefault(item.mime_type, []).append(
+                _Candidate(item.size or 0, item.name, relative_path, item.id)
+            )
 
     cases: list[EvaluationCase] = []
-    for _, name, relative_path in sorted(largest_by_type.values(), reverse=True):
+    # Types in order of their largest document; within a type, largest first, and
+    # the first one that is found and reads is the case for that type.
+    for candidates in sorted(candidates_by_type.values(), key=max, reverse=True):
         if len(cases) == wanted:
             break
-        keyword = _keyword(name)
-        if keyword is None:
-            continue
-        found = await scoped_drive.search(keyword, limit=VERIFY_LIMIT)
-        if not any(item.relative_path == relative_path for item in found.items):
-            continue
-        cases.append(
-            EvaluationCase(
-                question=f"What does {name} say?",
-                search_query=keyword,
-                expected_source=relative_path,
-                limit=VERIFY_LIMIT,
-            )
-        )
+        for candidate in sorted(candidates, reverse=True):
+            case = await _verified_case(scoped_drive, service, candidate)
+            if case is not None:
+                cases.append(case)
+                break
     return cases
+
+
+class _Candidate(NamedTuple):
+    size: int
+    name: str
+    relative_path: str
+    item_id: str
+
+
+async def _verified_case(
+    scoped_drive: ScopedDrive, service: DocumentService, candidate: _Candidate
+) -> EvaluationCase | None:
+    keyword = _keyword(candidate.name)
+    if keyword is None:
+        return None
+    found = await scoped_drive.search(keyword, limit=VERIFY_LIMIT)
+    if not any(item.relative_path == candidate.relative_path for item in found.items):
+        return None
+    # The read is the expensive check, so it comes last. One character is enough
+    # to force the download and the parse, which is all that can fail.
+    try:
+        await service.read_document(candidate.item_id, max_chars=1)
+    except DriveError:
+        return None
+    return EvaluationCase(
+        question=f"What does {candidate.name} say?",
+        search_query=keyword,
+        expected_source=candidate.relative_path,
+        limit=VERIFY_LIMIT,
+    )
 
 
 def _keyword(name: str) -> str | None:

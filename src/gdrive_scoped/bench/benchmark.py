@@ -60,6 +60,10 @@ class CaseBenchmark(BaseModel):
     question: str
     search_query: str
     expected_source: str
+    #: The search's page size: a different limit is a different Drive request, so
+    #: it is part of the case's identity. Defaults to `EvaluationCase`'s default for
+    #: reports written before it was recorded.
+    limit: int = 10
     passed: bool
     samples: list[BenchmarkSample]
     search: LatencyStats
@@ -290,7 +294,7 @@ def compare_benchmarks(
     # against anything, and no overlap at all would pass it vacuously.
     unmatched = {_case_key(case) for case in current.cases} ^ set(baseline_by_case)
     if unmatched:
-        queries = ", ".join(sorted(search_query for _, search_query, _ in unmatched))
+        queries = ", ".join(sorted(key[1] for key in unmatched))
         raise ValueError(
             f"Benchmark reports measure different cases ({queries}); record a new baseline"
         )
@@ -322,8 +326,8 @@ def compare_benchmarks(
     return regressions
 
 
-def _case_key(case: CaseBenchmark) -> tuple[str, str, str]:
-    return (case.question, case.search_query, case.expected_source)
+def _case_key(case: CaseBenchmark) -> tuple[str, str, str, int]:
+    return (case.question, case.search_query, case.expected_source, case.limit)
 
 
 def save_benchmark_report(report: BenchmarkReport, path: Path) -> None:
@@ -368,6 +372,7 @@ def _summarize_case(case: EvaluationCase, samples: list[BenchmarkSample]) -> Cas
         question=case.question,
         search_query=case.search_query,
         expected_source=case.expected_source,
+        limit=case.limit,
         passed=all(sample.source_found for sample in samples),
         samples=samples,
         search=_latency_stats([sample.search_ms for sample in samples]),

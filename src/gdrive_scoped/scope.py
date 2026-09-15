@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 import time
+import weakref
 from collections import deque
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -68,18 +69,17 @@ class SearchResult:
     incomplete: bool = False
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
 class AuthorizedItem:
     """One item whose membership was proven, ready to be read without re-proving it.
 
-    Bound to the scope that proved it. `download` accepts a proof only from the
-    scope that issued it, so one made under another root, or assembled by hand,
-    cannot carry an ID past this scope's boundary.
+    Only `ScopedDrive.authorize_document` issues these, and `download` recognises
+    the very instances it issued. Equality is identity, so a proof cannot be
+    forged around a `DriveItem`, copied, or carried to another scope.
     """
 
     item: DriveItem
     relative_path: str
-    scope: ScopedDrive = field(repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -98,6 +98,11 @@ class ScopedDrive:
     #: just did, and their map is newer than the one I rejected".
     _folder_map_generation: int = field(default=0, init=False, repr=False)
     _refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    #: The proofs this scope issued and callers still hold. `download` accepts
+    #: nothing else. Weak, so a proof a caller dropped costs nothing to remember.
+    _issued: weakref.WeakSet[AuthorizedItem] = field(
+        default_factory=weakref.WeakSet, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         # Drive resolves the alias `root` to the whole of a My Drive, and the
@@ -220,12 +225,14 @@ class ScopedDrive:
             raise ScopeViolation("Folders do not have readable document content")
         if not item.can_download:
             raise ScopeViolation("Drive does not permit downloading this item")
-        return AuthorizedItem(item=item, relative_path=relative_path, scope=self)
+        proof = AuthorizedItem(item=item, relative_path=relative_path)
+        self._issued.add(proof)
+        return proof
 
     async def download(self, authorized: AuthorizedItem, export_mime_type: str | None) -> bytes:
         """Fetch bytes for an item authorized earlier in this same request, by this scope."""
 
-        if authorized.scope is not self:
+        if authorized not in self._issued:
             _refuse(
                 authorized.item.id, "foreign_proof", "Authorization was not issued by this scope"
             )

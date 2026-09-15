@@ -48,6 +48,15 @@ class EmptyDocument(DriveError):
     """
 
 
+class ExtractionFailed(DriveError):
+    """The extractor for this type could not parse the bytes Drive returned.
+
+    Distinct from `EmptyDocument`: the parse did not succeed at all. A corrupt
+    or mislabelled file is the common case. Parsers raise whatever they like,
+    and none of it should reach an adapter that catches `DriveError`.
+    """
+
+
 class InvalidCursor(DriveError):
     """A pagination cursor was not one this library issued."""
 

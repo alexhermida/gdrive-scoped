@@ -9,7 +9,7 @@ import pytest
 from gdrive_scoped.drive import SHORTCUT_MIME_TYPE, DriveItem, SearchPage
 from gdrive_scoped.errors import ScopeViolation
 from gdrive_scoped.location import DriveKind, DriveLocation
-from gdrive_scoped.scope import ScopedDrive, audit_caller
+from gdrive_scoped.scope import AuthorizedItem, ScopedDrive, audit_caller
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SHARED_DRIVE = DriveLocation(DriveKind.SHARED_DRIVE, "drive-1")
@@ -615,3 +615,23 @@ async def test_a_proof_is_only_good_for_the_scope_that_issued_it() -> None:
     assert await issuing.download(authorized, None) == b"content"
     with pytest.raises(ScopeViolation, match="not issued by this scope"):
         await other.download(authorized, None)
+
+
+@pytest.mark.anyio
+async def test_a_proof_cannot_be_assembled_by_hand() -> None:
+    """`AuthorizedItem` is a plain dataclass, so nothing stops a caller building
+    one around any `DriveItem`. `download` recognises only the instances this
+    scope issued, so a hand-made one buys nothing, and neither does a faithful
+    copy of a real one."""
+    gateway, _, budget = _corpus_with_a_nested_folder()
+    scoped_drive = ScopedDrive(gateway, SHARED_DRIVE, "root-1")
+    outside = DriveItem("secret-1", "Secret.md", "text/markdown", "drive-1", parents=("outside-1",))
+
+    with pytest.raises(ScopeViolation, match="not issued by this scope"):
+        await scoped_drive.download(AuthorizedItem(item=outside, relative_path="Secret.md"), None)
+
+    real = await scoped_drive.authorize_document(budget.id)
+    copy = AuthorizedItem(item=real.item, relative_path=real.relative_path)
+    with pytest.raises(ScopeViolation, match="not issued by this scope"):
+        await scoped_drive.download(copy, None)
+    assert await scoped_drive.download(real, None) == b"content"

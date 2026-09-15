@@ -9,7 +9,13 @@ from openpyxl import Workbook
 
 from gdrive_scoped.documents import DocumentService
 from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveItem, SearchPage
-from gdrive_scoped.errors import EmptyDocument, ExportTooLarge, InvalidCursor, ScopeViolation
+from gdrive_scoped.errors import (
+    EmptyDocument,
+    ExportTooLarge,
+    ExtractionFailed,
+    InvalidCursor,
+    ScopeViolation,
+)
 from gdrive_scoped.extractors import ExtractedDocument, ExtractorRegistry, TextBlock
 from gdrive_scoped.extractors.registry import ExtractionPlan
 from gdrive_scoped.location import DriveKind, DriveLocation
@@ -387,6 +393,46 @@ async def test_folder_listing_rejects_a_negative_cursor() -> None:
     # "LTE" is base64 for "-1": as a slice bound it would page from the end.
     with pytest.raises(InvalidCursor):
         await service.list_folder(cursor="LTE")
+
+
+@pytest.mark.anyio
+async def test_an_invalid_cursor_is_rejected_before_anything_is_downloaded() -> None:
+    """A malformed cursor is a caller error, and it used to cost a full download
+    and parse before it was rejected."""
+    root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
+    document = DriveItem("document", "notes.txt", "text/plain", "drive", parents=("root-folder",))
+    gateway = SearchGateway(root, document, search_results=[], blobs={document.id: b"notes"})
+    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+
+    with pytest.raises(InvalidCursor):
+        await service.read_document(document.id, cursor="A")
+
+    assert gateway.downloads == []
+
+
+@pytest.mark.anyio
+async def test_a_document_the_parser_cannot_read_is_a_drive_error() -> None:
+    """Parsers raise whatever they like at corrupt bytes. An adapter catching
+    `DriveError`, as documented, must never see the parser's own exception."""
+    root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
+    document = DriveItem(
+        "document", "Broken.pdf", "application/pdf", "drive", parents=("root-folder",)
+    )
+    gateway = SearchGateway(root, document, search_results=[], blobs={document.id: b"not a pdf"})
+
+    def explode(_: bytes) -> ExtractedDocument:
+        raise RuntimeError("bad xref table")
+
+    registry = ExtractorRegistry()
+    registry._plans["application/pdf"] = ExtractionPlan(  # noqa: SLF001
+        export_mime_type=None, extractor=explode
+    )
+    service = DocumentService(
+        ScopedDrive(gateway, SHARED_DRIVE, "root-folder"), extractors=registry
+    )
+
+    with pytest.raises(ExtractionFailed, match="Broken.pdf could not be parsed"):
+        await service.read_document(document.id)
 
 
 @pytest.mark.anyio

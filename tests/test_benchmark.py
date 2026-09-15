@@ -184,6 +184,19 @@ async def test_benchmark_comparison_refuses_reports_that_measure_different_cases
         compare_benchmarks(nothing, report, max_regression_percent=20)
 
 
+@pytest.mark.anyio
+async def test_benchmark_comparison_treats_a_different_search_limit_as_a_different_case() -> None:
+    """The limit is the page size of the Drive request, so a baseline measured
+    with another one measured other work under the same name."""
+    report = await _timeline_report()
+    [case] = report.cases
+    assert case.limit == 10
+    baseline = report.model_copy(update={"cases": [case.model_copy(update={"limit": 1})]})
+
+    with pytest.raises(ValueError, match="different cases"):
+        compare_benchmarks(report, baseline, max_regression_percent=20)
+
+
 async def _timeline_report() -> BenchmarkReport:
     benchmark = RetrievalBenchmark(
         gateway=BenchmarkGateway(),

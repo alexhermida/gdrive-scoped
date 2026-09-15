@@ -72,11 +72,17 @@ Records contain search queries, file IDs and the caller. That is what makes them
 
 ## Failures
 
-Every deliberate failure is one of the `gdrive_scoped.errors` hierarchy, all under
-`DriveError`, and nothing inherits from a builtin. They cover items outside the Authorized
-Subtree, items with no provable parent inside it, shortcuts, trash, download restrictions,
-unsupported content types, invalid cursors or limits, export limits, rejected credentials and
-upstream Drive errors.
+Every failure of a well-formed call is one of the `gdrive_scoped.errors` hierarchy, all under
+`DriveError`, and nothing there inherits from a builtin. They cover items outside the
+Authorized Subtree, items with no provable parent inside it, shortcuts, trash, download
+restrictions, unsupported content types, content the parser cannot read, documents with no
+text, invalid cursors, export limits, rejected credentials and upstream Drive errors.
+
+Arguments a caller controls before any call is made are not conditions of the corpus, and
+raise builtin `ValueError` as a bug in the adapter: a `limit` or `max_chars` out of range, an
+empty query, a location that contradicts itself, a root that is the alias `root`. The
+entry-point wrapper's `ConfigurationError` in `gdrive_scoped.env` is a `ValueError` for the
+same reason, and nothing under `gdrive_scoped` imports it.
 
 Nothing ever falls back to a broader query or a broader credential scope. An adapter decides
 what each error becomes on its own wire; catching `DriveError` covers leaves added later.

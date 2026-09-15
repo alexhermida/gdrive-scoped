@@ -7,7 +7,7 @@ import base64
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from gdrive_scoped.errors import EmptyDocument, ExportTooLarge, InvalidCursor
+from gdrive_scoped.errors import EmptyDocument, ExportTooLarge, ExtractionFailed, InvalidCursor
 from gdrive_scoped.extractors import ExtractedDocument, ExtractorRegistry
 from gdrive_scoped.extractors.registry import ExtractionPlan
 from gdrive_scoped.scope import (
@@ -150,13 +150,17 @@ class DocumentService:
         # One authorization, whether or not the parsed document is already cached: the
         # proof is what gates the read, and it is made against Drive on every call.
         authorized = await self.scoped_drive.authorize_document(file_id)
+        # Decoded after the proof and before the fetch: a malformed cursor must not
+        # cost a download, and an ID outside the subtree is still refused, and
+        # audited, ahead of any complaint about the cursor. Whether the offset lands
+        # inside the text is checked once the text exists.
+        start = _decode_cursor(cursor)
         item = authorized.item
         plan = self.extractors.plan_for(item.mime_type)
         extracted = await self._extracted(authorized, plan)
         if not extracted.text.strip():
             raise EmptyDocument(_empty_document_message(item.mime_type))
 
-        start = _decode_cursor(cursor)
         chunk = _read_chunk(extracted, start, max_chars, self.max_read_bytes)
         _record(
             "read_document",
@@ -209,7 +213,14 @@ class DocumentService:
             )
 
         content_bytes = await self.scoped_drive.download(authorized, plan.export_mime_type)
-        extracted = await asyncio.to_thread(plan.extractor, content_bytes)
+        try:
+            extracted = await asyncio.to_thread(plan.extractor, content_bytes)
+        except Exception as error:
+            # Parsers raise whatever they like at corrupt or mislabelled bytes. The
+            # contract is that every failure of a well-formed call is a DriveError.
+            raise ExtractionFailed(
+                f"{item.name} could not be parsed as {item.mime_type}"
+            ) from error
         self._cache[cache_key] = extracted
         while len(self._cache) > self.cache_size:
             self._cache.popitem(last=False)
@@ -324,6 +335,7 @@ def _decode_cursor(cursor: str | None) -> int:
         value = base64.urlsafe_b64decode(padded.encode()).decode()
         offset = int(value)
     except (UnicodeDecodeError, ValueError) as error:
+        # binascii.Error, which malformed base64 raises, is a ValueError too.
         raise InvalidCursor("Invalid read cursor") from error
     # This module only ever issues non-negative offsets. Let through, a negative
     # one is a Python slice bound and pages from the end of the listing.

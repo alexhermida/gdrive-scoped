@@ -159,6 +159,27 @@ async def test_derived_cases_take_the_largest_readable_document_of_each_type() -
     assert [case.search_query for case in cases] == ["Timeline", "Budget"]
 
 
+class UnreadableLargestGateway(DerivationGateway):
+    """The largest Markdown file is a scan: its type is supported, its text is empty."""
+
+    async def download_item(self, item_id: str) -> bytes:
+        return b"" if item_id == "timeline" else b"content"
+
+
+@pytest.mark.anyio
+async def test_derived_cases_skip_a_document_that_does_not_read() -> None:
+    """`supports()` vouches for the MIME type only. A case chosen for its size
+    alone aborted the benchmark at its first read, so the read is now part of
+    the verification and the next largest of the type is tried."""
+    scoped_drive = ScopedDrive(
+        UnreadableLargestGateway(), DriveLocation(DriveKind.SHARED_DRIVE, "drive"), "root-folder"
+    )
+
+    cases = await derive_cases(scoped_drive)
+
+    assert [case.expected_source for case in cases] == ["Plans/Roadmap.md", "Budget.csv"]
+
+
 @pytest.mark.anyio
 async def test_derived_cases_stop_at_the_requested_count() -> None:
     cases = await derive_cases(_derivation_drive(), wanted=1)

@@ -9,15 +9,26 @@
   is not the one asked for, which closes any other alias the same way.
 - `ScopedDrive` requires a finite, non-negative folder-map TTL. Constructed directly with
   `inf`, the map never refreshed.
-- An `AuthorizedItem` is bound to the scope that issued it, and `download` refuses one from any
-  other. A proof made under another root, or assembled by hand, no longer carries an ID past
-  this scope's boundary.
+- `download` accepts only the very `AuthorizedItem` instances this scope issued. The proof is
+  a plain dataclass, so nothing stopped a caller building one around any `DriveItem`; equality
+  is now identity and the scope keeps a weak set of what it issued, so a proof cannot be
+  forged, copied or carried to another root.
 - `compare_benchmarks` and `--max-regression-percent` require a finite, non-negative
   threshold. `nan` compared false with every regression and `inf` was never exceeded, so the
   gate reported holding without ever closing.
 - `compare_benchmarks` refuses reports that measure different cases instead of comparing the
   overlap. An added or renamed case used to pass the gate unmeasured, and no overlap at all
   passed it vacuously.
+- `read_document` decodes the cursor after the proof and before the fetch. A malformed cursor
+  used to be rejected only once the document had been downloaded and parsed.
+- A parser that fails on the bytes Drive returned raises `ExtractionFailed`, a `DriveError`,
+  instead of whatever the parser threw. `docs/api.md` now also says which errors are the
+  library's and which are the caller's: arguments out of range raise builtin `ValueError`.
+- Derived benchmark cases are read once before they are kept. "Readable" meant an extractor
+  claimed the MIME type; a scan with no text or a file over the export cap was chosen for its
+  size and aborted the benchmark at its first read. The next largest of the type is tried.
+- Benchmark reports record each case's search `limit`, and comparison treats a different
+  limit as a different case, because it is a different Drive request.
 
 ## v0.7.1 — four edges closed
 
