@@ -109,7 +109,10 @@ class MemoryGateway:
 
 
 @pytest.mark.anyio
-async def test_initialization_accepts_a_live_folder_in_the_configured_drive() -> None:
+async def test_initialization_measures_a_shared_drive_from_the_root_folder() -> None:
+    """Drive already records where the root lives. Asking an operator to
+    restate it only created something they could state wrongly."""
+
     root = DriveItem(
         id="root-1",
         name="Agent corpus",
@@ -118,17 +121,20 @@ async def test_initialization_accepts_a_live_folder_in_the_configured_drive() ->
     )
     scoped_drive = ScopedDrive(
         gateway=RootGateway(root),
-        location=SHARED_DRIVE,
         root_folder_id="root-1",
     )
 
     initialized_root = await scoped_drive.initialize()
 
     assert initialized_root == root
+    assert scoped_drive.location == SHARED_DRIVE
 
 
 @pytest.mark.anyio
-async def test_initialization_accepts_a_live_folder_in_my_drive() -> None:
+async def test_initialization_measures_my_drive_from_a_root_with_no_drive_id() -> None:
+    """`driveId` is absent for everything outside a Shared Drive, which is
+    exactly the My Drive case and not a gap in the metadata."""
+
     root = DriveItem(
         id="root-1",
         name="Agent corpus",
@@ -137,32 +143,46 @@ async def test_initialization_accepts_a_live_folder_in_my_drive() -> None:
     )
     scoped_drive = ScopedDrive(
         gateway=RootGateway(root),
-        location=MY_DRIVE,
         root_folder_id="root-1",
     )
 
     initialized_root = await scoped_drive.initialize()
 
     assert initialized_root == root
+    assert scoped_drive.location == MY_DRIVE
 
 
 @pytest.mark.anyio
-async def test_initialization_rejects_a_shared_drive_folder_in_my_drive_mode() -> None:
-    root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
-    scoped_drive = ScopedDrive(RootGateway(root), MY_DRIVE, "root-1")
+async def test_the_location_is_not_readable_before_it_has_been_measured() -> None:
+    """Every containment check reads `location`. Answering before the root has
+    been read would be a boundary decision made on no evidence, so it says what
+    is missing instead."""
 
-    with pytest.raises(ScopeViolation, match="Drive location"):
-        await scoped_drive.initialize()
+    root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
+    scoped_drive = ScopedDrive(RootGateway(root), "root-1")
+
+    with pytest.raises(RuntimeError, match="initialize"):
+        _ = scoped_drive.location
+
+
+@pytest.mark.anyio
+async def test_an_item_from_another_drive_is_refused_against_the_measured_location() -> None:
+    """The measurement replaces the configured assertion and is then asserted
+    exactly as the configured one was."""
+
+    root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
+    elsewhere = DriveItem("file-9", "Elsewhere.md", "text/markdown", "drive-2", parents=("root-1",))
+    scoped_drive = ScopedDrive(MemoryGateway(root, elsewhere), "root-1")
+    await scoped_drive.initialize()
+
+    with pytest.raises(ScopeViolation, match="different Drive location"):
+        await scoped_drive.get_metadata("file-9")
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     ("root", "message"),
     [
-        (
-            DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-2"),
-            "Drive location",
-        ),
         (DriveItem("root-1", "Agent corpus", "text/plain", "drive-1"), "not a folder"),
         (
             DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1", trashed=True),
@@ -173,7 +193,6 @@ async def test_initialization_rejects_a_shared_drive_folder_in_my_drive_mode() -
 async def test_initialization_rejects_an_invalid_root(root: DriveItem, message: str) -> None:
     scoped_drive = ScopedDrive(
         gateway=RootGateway(root),
-        location=SHARED_DRIVE,
         root_folder_id="root-1",
     )
 
@@ -193,9 +212,9 @@ async def test_a_listed_item_can_be_looked_up_again_by_its_drive_id() -> None:
     )
     scoped_drive = ScopedDrive(
         gateway=MemoryGateway(root, report),
-        location=SHARED_DRIVE,
         root_folder_id="root-1",
     )
+    await scoped_drive.initialize()
 
     listed = await scoped_drive.list_folder()
     metadata = await scoped_drive.get_metadata(listed[0].id)
@@ -218,9 +237,9 @@ async def test_a_raw_id_outside_the_subtree_is_refused() -> None:
     outsider = DriveItem("file-9", "Elsewhere.md", "text/markdown", "drive-1", parents=("other",))
     scoped_drive = ScopedDrive(
         gateway=MemoryGateway(root, outsider),
-        location=SHARED_DRIVE,
         root_folder_id="root-1",
     )
+    await scoped_drive.initialize()
 
     with pytest.raises(ScopeViolation, match="outside the configured root"):
         await scoped_drive.get_metadata("file-9")
@@ -235,9 +254,9 @@ async def test_a_file_shared_directly_with_the_bot_user_is_refused() -> None:
     gifted = DriveItem("file-9", "Unsolicited.md", "text/markdown", "drive-1", parents=())
     scoped_drive = ScopedDrive(
         gateway=MemoryGateway(root, gifted),
-        location=SHARED_DRIVE,
         root_folder_id="root-1",
     )
+    await scoped_drive.initialize()
 
     with pytest.raises(ScopeViolation, match="ancestry cannot be proven"):
         await scoped_drive.get_metadata("file-9")
@@ -250,7 +269,8 @@ async def test_access_is_lost_after_an_item_moves_outside_the_root() -> None:
     outside = DriveItem("outside-1", "Outside", FOLDER_MIME_TYPE, "drive-1", parents=("drive-1",))
     report = DriveItem("file-1", "Report.md", "text/markdown", "drive-1", parents=("root-1",))
     gateway = MemoryGateway(drive_root, root, outside, report)
-    scoped_drive = ScopedDrive(gateway, SHARED_DRIVE, "root-1")
+    scoped_drive = ScopedDrive(gateway, "root-1")
+    await scoped_drive.initialize()
     [listed] = await scoped_drive.list_folder()
     gateway.items[report.id] = replace(report, parents=(outside.id,))
 
@@ -271,9 +291,9 @@ async def test_content_fetch_honors_drive_download_restrictions() -> None:
     )
     scoped_drive = ScopedDrive(
         gateway=MemoryGateway(root, restricted),
-        location=SHARED_DRIVE,
         root_folder_id="root-1",
     )
+    await scoped_drive.initialize()
     [listed] = await scoped_drive.list_folder()
 
     with pytest.raises(ScopeViolation, match="does not permit downloading"):
@@ -288,9 +308,9 @@ async def test_shortcuts_are_never_returned_from_an_authorized_folder() -> None:
     )
     scoped_drive = ScopedDrive(
         gateway=MemoryGateway(root, shortcut),
-        location=SHARED_DRIVE,
         root_folder_id="root-1",
     )
+    await scoped_drive.initialize()
 
     assert await scoped_drive.list_folder() == []
 
@@ -302,7 +322,8 @@ async def test_my_drive_listing_drops_a_cross_location_child() -> None:
     cross_location = DriveItem(
         "file-2", "Shared report.md", "text/markdown", "drive-1", parents=("root-1",)
     )
-    scoped_drive = ScopedDrive(MemoryGateway(root, report, cross_location), MY_DRIVE, "root-1")
+    scoped_drive = ScopedDrive(MemoryGateway(root, report, cross_location), "root-1")
+    await scoped_drive.initialize()
 
     listed = await scoped_drive.list_folder()
 
@@ -314,7 +335,8 @@ async def test_my_drive_access_is_lost_if_an_item_changes_location() -> None:
     root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, None)
     report = DriveItem("file-1", "Report.md", "text/markdown", None, parents=("root-1",))
     gateway = MemoryGateway(root, report)
-    scoped_drive = ScopedDrive(gateway, MY_DRIVE, "root-1")
+    scoped_drive = ScopedDrive(gateway, "root-1")
+    await scoped_drive.initialize()
     [listed] = await scoped_drive.list_folder()
     gateway.items[report.id] = replace(report, drive_id="drive-1")
 
@@ -325,7 +347,8 @@ async def test_my_drive_access_is_lost_if_an_item_changes_location() -> None:
 @pytest.mark.anyio
 async def test_search_stops_returning_files_from_a_folder_that_left_the_subtree() -> None:
     gateway, plans, _ = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=0.0)
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=0.0)
+    await scoped_drive.initialize()
     found = await scoped_drive.search("budget", limit=10)
     assert [item.name for item in found.items] == ["Budget.md"]
 
@@ -340,7 +363,8 @@ async def test_search_never_names_a_file_outside_the_subtree() -> None:
     gateway.items["file-2"] = DriveItem(
         "file-2", "Secret budget.md", "text/markdown", "drive-1", parents=("outside-1",)
     )
-    scoped_drive = ScopedDrive(gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=0.0)
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=0.0)
+    await scoped_drive.initialize()
 
     results = await scoped_drive.search("budget", limit=10)
 
@@ -350,9 +374,8 @@ async def test_search_never_names_a_file_outside_the_subtree() -> None:
 @pytest.mark.anyio
 async def test_a_file_that_moves_out_is_refused_even_while_the_folder_map_is_warm() -> None:
     gateway, _, budget = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(
-        gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=600.0, clock=FakeClock()
-    )
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=600.0, clock=FakeClock())
+    await scoped_drive.initialize()
     [found] = (await scoped_drive.search("budget", limit=10)).items
     assert (await scoped_drive.get_metadata(found.id)).name == "Budget.md"
 
@@ -365,9 +388,8 @@ async def test_a_file_that_moves_out_is_refused_even_while_the_folder_map_is_war
 @pytest.mark.anyio
 async def test_a_trashed_file_is_refused_even_while_the_folder_map_is_warm() -> None:
     gateway, _, budget = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(
-        gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=600.0, clock=FakeClock()
-    )
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=600.0, clock=FakeClock())
+    await scoped_drive.initialize()
     [found] = (await scoped_drive.search("budget", limit=10)).items
     assert (await scoped_drive.get_metadata(found.id)).name == "Budget.md"
 
@@ -388,9 +410,8 @@ async def test_a_folder_that_leaves_the_subtree_keeps_serving_until_the_map_expi
 
     clock = FakeClock()
     gateway, plans, _ = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(
-        gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=60.0, clock=clock
-    )
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=60.0, clock=clock)
+    await scoped_drive.initialize()
     [found] = (await scoped_drive.search("budget", limit=10)).items
 
     gateway.items[plans.id] = replace(plans, parents=("outside-1",))
@@ -405,7 +426,8 @@ async def test_a_folder_that_leaves_the_subtree_keeps_serving_until_the_map_expi
 @pytest.mark.anyio
 async def test_a_zero_ttl_reads_the_folder_map_again_for_every_request() -> None:
     gateway, _, _ = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=0.0)
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=0.0)
+    await scoped_drive.initialize()
 
     await scoped_drive.search("budget", limit=10)
     await scoped_drive.search("budget", limit=10)
@@ -417,9 +439,8 @@ async def test_a_zero_ttl_reads_the_folder_map_again_for_every_request() -> None
 async def test_a_warm_folder_map_is_reused_until_its_ttl_expires() -> None:
     clock = FakeClock()
     gateway, _, _ = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(
-        gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=60.0, clock=clock
-    )
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=60.0, clock=clock)
+    await scoped_drive.initialize()
 
     await scoped_drive.search("budget", limit=10)
     clock.now += 59.0
@@ -435,9 +456,8 @@ async def test_a_warm_folder_map_is_reused_until_its_ttl_expires() -> None:
 async def test_a_folder_added_after_the_map_was_built_is_not_a_permanent_denial() -> None:
     clock = FakeClock()
     gateway, _, budget = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(
-        gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=600.0, clock=clock
-    )
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=600.0, clock=clock)
+    await scoped_drive.initialize()
     [found] = (await scoped_drive.search("budget", limit=10)).items
 
     gateway.items["later-1"] = DriveItem(
@@ -462,7 +482,8 @@ async def test_a_folder_with_two_parents_is_not_descended_into() -> None:
     )
     budget = DriveItem("file-1", "Budget.md", "text/markdown", "drive-1", parents=("shared-1",))
     gateway = MemoryGateway(drive_root, root, outside, shared, budget)
-    scoped_drive = ScopedDrive(gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=0.0)
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=0.0)
+    await scoped_drive.initialize()
 
     assert (await scoped_drive.search("budget", limit=10)).items == []
 
@@ -475,7 +496,8 @@ async def test_concurrent_misses_enumerate_the_folder_map_once() -> None:
     concurrency, at exactly the moment the instance is least able to afford it.
     """
     gateway, _, _ = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(gateway, SHARED_DRIVE, "root-1", folder_map_ttl_seconds=60.0)
+    scoped_drive = ScopedDrive(gateway, "root-1", folder_map_ttl_seconds=60.0)
+    await scoped_drive.initialize()
 
     await asyncio.gather(*(scoped_drive.search("budget", limit=10) for _ in range(4)))
 
@@ -491,7 +513,8 @@ async def test_a_refusal_is_recorded_on_the_audit_log(
     given, which is worth a metric, so the fields have to be structured."""
     root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
     outsider = DriveItem("file-9", "Elsewhere.md", "text/markdown", "drive-1", parents=("other",))
-    scoped_drive = ScopedDrive(MemoryGateway(root, outsider), SHARED_DRIVE, "root-1")
+    scoped_drive = ScopedDrive(MemoryGateway(root, outsider), "root-1")
+    await scoped_drive.initialize()
 
     with (
         caplog.at_level(logging.WARNING, logger="gdrive_scoped.audit"),
@@ -512,7 +535,8 @@ async def test_an_allowed_item_is_recorded_too(caplog: pytest.LogCaptureFixture)
     corpus or a broken audit trail, and the allow records tell them apart."""
     root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
     report = DriveItem("file-1", "Report.md", "text/markdown", "drive-1", parents=("root-1",))
-    scoped_drive = ScopedDrive(MemoryGateway(root, report), SHARED_DRIVE, "root-1")
+    scoped_drive = ScopedDrive(MemoryGateway(root, report), "root-1")
+    await scoped_drive.initialize()
 
     with caplog.at_level(logging.INFO, logger="gdrive_scoped.audit"):
         await scoped_drive.get_metadata("file-1")
@@ -534,7 +558,8 @@ async def test_metadata_carries_the_people_behind_an_item() -> None:
         owners=("Ada Lovelace",),
         last_modified_by="Grace Hopper",
     )
-    scoped_drive = ScopedDrive(MemoryGateway(root, report), SHARED_DRIVE, "root-1")
+    scoped_drive = ScopedDrive(MemoryGateway(root, report), "root-1")
+    await scoped_drive.initialize()
 
     item = await scoped_drive.get_metadata("file-1")
 
@@ -550,7 +575,8 @@ async def test_a_decision_names_the_caller_when_the_adapter_says_who(
     caller for the span of a request and every record carries it."""
     root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
     report = DriveItem("file-1", "Report.md", "text/markdown", "drive-1", parents=("root-1",))
-    scoped_drive = ScopedDrive(MemoryGateway(root, report), SHARED_DRIVE, "root-1")
+    scoped_drive = ScopedDrive(MemoryGateway(root, report), "root-1")
+    await scoped_drive.initialize()
 
     token = audit_caller.set("alice@example.org")
     try:
@@ -571,31 +597,56 @@ def test_the_folder_map_window_must_be_finite_and_not_negative(ttl: float) -> No
     root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
 
     with pytest.raises(ValueError, match="finite and not negative"):
-        ScopedDrive(RootGateway(root), SHARED_DRIVE, "root-1", folder_map_ttl_seconds=ttl)
+        ScopedDrive(RootGateway(root), "root-1", folder_map_ttl_seconds=ttl)
 
 
 def test_the_root_alias_is_refused_before_drive_can_resolve_it() -> None:
-    """Drive resolves `root` to the whole of a My Drive. Only `initialize()`
-    noticed, and it is optional: the root read keyed the folder map on the real
-    ID and every listing, search and read succeeded against the entire Drive."""
+    """Drive resolves `root` to the whole of a My Drive, and the root read
+    would then key the folder map on the real ID: every listing, search and read
+    would succeed against the entire Drive. Refused in the constructor, so no
+    call order can reach it."""
     root = DriveItem("root-1", "Agent corpus", FOLDER_MIME_TYPE, "drive-1")
 
     with pytest.raises(ValueError, match="not the alias 'root'"):
-        ScopedDrive(RootGateway(root), MY_DRIVE, "root")
+        ScopedDrive(RootGateway(root), "root")
 
 
 class ResolvingGateway(RootGateway):
     """Answers a root read with the same item whatever ID was asked for, which
-    is what Drive does with an alias."""
+    is what Drive does with an alias.
+
+    `honest` answers with the ID that was asked for instead, so a test can put
+    the alias behaviour *after* the location has been measured.
+    """
+
+    def __init__(self, root: DriveItem, *, honest: bool = False) -> None:
+        super().__init__(root)
+        self.honest = honest
 
     async def get_item(self, item_id: str) -> DriveItem:
-        return self._root
+        return replace(self._root, id=item_id) if self.honest else self._root
 
 
 @pytest.mark.anyio
 async def test_a_root_read_answered_with_a_different_item_is_refused() -> None:
     real_root = DriveItem("real-root", "Everything", FOLDER_MIME_TYPE, "drive-1")
-    scoped_drive = ScopedDrive(ResolvingGateway(real_root), SHARED_DRIVE, "some-alias")
+    scoped_drive = ScopedDrive(ResolvingGateway(real_root), "some-alias")
+
+    with pytest.raises(ScopeViolation, match="unexpected root metadata"):
+        await scoped_drive.initialize()
+
+
+@pytest.mark.anyio
+async def test_a_root_that_starts_answering_for_something_else_is_refused() -> None:
+    """Initialization is one read; every request re-reads the root. A root that
+    begins resolving elsewhere afterwards is caught by the second read, not
+    served from the first."""
+
+    real_root = DriveItem("real-root", "Everything", FOLDER_MIME_TYPE, "drive-1")
+    gateway = ResolvingGateway(real_root, honest=True)
+    scoped_drive = ScopedDrive(gateway, "some-alias")
+    await scoped_drive.initialize()
+    gateway.honest = False
 
     with pytest.raises(ScopeViolation, match="unexpected root metadata"):
         await scoped_drive.list_folder()
@@ -608,8 +659,10 @@ async def test_a_proof_is_only_good_for_the_scope_that_issued_it() -> None:
     """Two scopes over the same corpus: a proof from one is not a proof for the
     other, so one cannot be carried across roots or assembled by hand."""
     gateway, _, budget = _corpus_with_a_nested_folder()
-    issuing = ScopedDrive(gateway, SHARED_DRIVE, "root-1")
-    other = ScopedDrive(gateway, SHARED_DRIVE, "root-1")
+    issuing = ScopedDrive(gateway, "root-1")
+    await issuing.initialize()
+    other = ScopedDrive(gateway, "root-1")
+    await other.initialize()
     authorized = await issuing.authorize_document(budget.id)
 
     assert await issuing.download(authorized, None) == b"content"
@@ -624,7 +677,8 @@ async def test_a_proof_cannot_be_assembled_by_hand() -> None:
     scope issued, so a hand-made one buys nothing, and neither does a faithful
     copy of a real one."""
     gateway, _, budget = _corpus_with_a_nested_folder()
-    scoped_drive = ScopedDrive(gateway, SHARED_DRIVE, "root-1")
+    scoped_drive = ScopedDrive(gateway, "root-1")
+    await scoped_drive.initialize()
     outside = DriveItem("secret-1", "Secret.md", "text/markdown", "drive-1", parents=("outside-1",))
 
     with pytest.raises(ScopeViolation, match="not issued by this scope"):

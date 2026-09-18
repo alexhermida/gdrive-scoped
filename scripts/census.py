@@ -19,14 +19,13 @@ from gdrive_scoped.env import Settings, credentials_from_environ
 
 async def main() -> int:
     settings = Settings.from_environ()
-    gateway = create_gateway(credentials_from_environ(), settings.location)
+    gateway = create_gateway(credentials_from_environ())
     # Said first, because nothing else in the output would. A census run as
     # the developer instead of the bot user enumerates the developer's reach
     # and describes a deployment that does not exist.
     print(f"identity: {await gateway.identity()}")
     scoped_drive = ScopedDrive(
         gateway=gateway,
-        location=settings.location,
         root_folder_id=settings.root_folder_id,
         folder_map_ttl_seconds=settings.folder_map_ttl_seconds,
     )

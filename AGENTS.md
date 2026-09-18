@@ -15,8 +15,9 @@ Before changing code:
 ## Invariants
 
 - Everything is read-only. Do not add Drive write methods, write scopes, or mutating tools.
-- One deployment exposes one Configured Root Folder inside one configured Drive Location: My
-  Drive or one Shared Drive.
+- One deployment exposes one Configured Root Folder. The Drive Location holding it — My Drive
+  or one Shared Drive — is measured from that folder by `ScopedDrive.initialize()` and then
+  asserted on every item, so `initialize()` comes before anything else (ADR 0011).
 - Every item returned or read must be inside the current Authorized Subtree.
 - **The core imports no MCP, reads no environment variable, and discovers no credentials.**
   `gdrive_scoped.env` is the single exception and is for this repository's own entry points —

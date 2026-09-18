@@ -12,9 +12,16 @@ from gdrive_scoped.bench.evaluation import (
     save_cases,
 )
 from gdrive_scoped.documents import DocumentService
-from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveItem, SearchPage
-from gdrive_scoped.location import DriveKind, DriveLocation
+from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveGateway, DriveItem, SearchPage
 from gdrive_scoped.scope import ScopedDrive
+
+
+async def _scope(gateway: DriveGateway) -> ScopedDrive:
+    """A scope over `root-folder` that has measured its Drive location."""
+
+    scoped_drive = ScopedDrive(gateway, "root-folder")
+    await scoped_drive.initialize()
+    return scoped_drive
 
 
 class EvaluationGateway:
@@ -65,13 +72,7 @@ def test_evaluation_cases_load_from_a_small_json_file(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_evaluation_reports_source_discovery_without_grading_answers() -> None:
-    service = DocumentService(
-        ScopedDrive(
-            EvaluationGateway(),
-            DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
-            "root-folder",
-        )
-    )
+    service = DocumentService(await _scope(EvaluationGateway()))
     cases = [
         EvaluationCase(question="When?", search_query="timeline", expected_source="timeline.md"),
         EvaluationCase(question="Where?", search_query="timeline", expected_source="missing.pdf"),
@@ -145,15 +146,13 @@ class DerivationGateway:
         return b"content"
 
 
-def _derivation_drive() -> ScopedDrive:
-    return ScopedDrive(
-        DerivationGateway(), DriveLocation(DriveKind.SHARED_DRIVE, "drive"), "root-folder"
-    )
+async def _derivation_drive() -> ScopedDrive:
+    return await _scope(DerivationGateway())
 
 
 @pytest.mark.anyio
 async def test_derived_cases_take_the_largest_readable_document_of_each_type() -> None:
-    cases = await derive_cases(_derivation_drive())
+    cases = await derive_cases(await _derivation_drive())
 
     assert [case.expected_source for case in cases] == ["Plans/Timeline.md", "Budget.csv"]
     assert [case.search_query for case in cases] == ["Timeline", "Budget"]
@@ -171,9 +170,7 @@ async def test_derived_cases_skip_a_document_that_does_not_read() -> None:
     """`supports()` vouches for the MIME type only. A case chosen for its size
     alone aborted the benchmark at its first read, so the read is now part of
     the verification and the next largest of the type is tried."""
-    scoped_drive = ScopedDrive(
-        UnreadableLargestGateway(), DriveLocation(DriveKind.SHARED_DRIVE, "drive"), "root-folder"
-    )
+    scoped_drive = await _scope(UnreadableLargestGateway())
 
     cases = await derive_cases(scoped_drive)
 
@@ -182,7 +179,7 @@ async def test_derived_cases_skip_a_document_that_does_not_read() -> None:
 
 @pytest.mark.anyio
 async def test_derived_cases_stop_at_the_requested_count() -> None:
-    cases = await derive_cases(_derivation_drive(), wanted=1)
+    cases = await derive_cases(await _derivation_drive(), wanted=1)
 
     assert [case.expected_source for case in cases] == ["Plans/Timeline.md"]
 
@@ -190,12 +187,12 @@ async def test_derived_cases_stop_at_the_requested_count() -> None:
 @pytest.mark.anyio
 async def test_derived_cases_refuse_a_count_no_evaluation_file_could_hold() -> None:
     with pytest.raises(ValueError, match="between 1 and 10"):
-        await derive_cases(_derivation_drive(), wanted=11)
+        await derive_cases(await _derivation_drive(), wanted=11)
 
 
 @pytest.mark.anyio
 async def test_derived_cases_round_trip_through_the_file_load_cases_reads(tmp_path: Path) -> None:
-    cases = await derive_cases(_derivation_drive())
+    cases = await derive_cases(await _derivation_drive())
     path = tmp_path / "derived" / "cases.json"
 
     save_cases(cases, path)

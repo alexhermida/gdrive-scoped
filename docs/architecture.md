@@ -4,8 +4,9 @@
 
 The library answers one question: is Google Drive's native keyword retrieval over a restricted folder subtree useful enough to provide agent context without building an index?
 
-One deployment exposes one Configured Root Folder in one Drive Location: My Drive or one Shared
-Drive. The core is a library; an adapter puts it on a wire — an MCP server, a hosted provider, an
+One deployment exposes one Configured Root Folder, and the Drive Location holding it — My Drive
+or one Shared Drive — is measured from that folder rather than configured beside it (ADR 0011).
+The core is a library; an adapter puts it on a wire — an MCP server, a hosted provider, an
 agent — and the core imports none of them, reads no environment variable, and takes its credentials
 as an argument. `examples/mcp_server.py` is the smallest complete adapter.
 
@@ -35,13 +36,13 @@ Dependencies point inward. A transport and Google are both adapters. An adapter 
 
 Offers only the read operations the application needs: fetch metadata, list direct children, enumerate every folder the identity can see, search within named parent folders for a requested number of hits, download blob content, and export Google Workspace content. It exposes no generic request method and no write operation.
 
-Every list query uses the `user` corpus. A Shared Drive location adds `includeItemsFromAllDrives`; a My Drive location excludes Shared Drive items. No query addresses a drive by `driveId`: that requires the Drive Identity to be a *member* of the drive, and being granted the root folder is all it needs (ADR 0010). The configured Shared Drive ID is asserted on every item instead.
+Every list query uses the `user` corpus with `includeItemsFromAllDrives`, unconditionally: the gateway is not told where the corpus is, because Scoped Drive measures that one layer up. No query addresses a drive by `driveId`: that requires the Drive Identity to be a *member* of the drive, and being granted the root folder is all it needs (ADR 0010). The measured Shared Drive ID is asserted on every item instead, so widening the request cannot widen the corpus — a My Drive corpus simply drops the Shared Drive rows the query now returns, at the cost of carrying them.
 
 ### Scoped Drive
 
-Owns the security boundary. It validates the Configured Root Folder, discovers descendant folders for recursive search, and verifies current ancestry before returning metadata or bytes. No caller can bypass it to reach the gateway. Every decision it makes — allow or refuse — is recorded on the `gdrive_scoped.audit` logger with structured `decision`, `reason` and `file_id`.
+Owns the security boundary. `initialize()` validates the Configured Root Folder and measures the Drive Location from its `driveId` — absent is My Drive, present names the Shared Drive — which is why it must be awaited before anything else is asked of the scope; `ScopedDrive.location` reports the measurement. It then discovers descendant folders for recursive search, and verifies current ancestry before returning metadata or bytes. The root is re-read on every request, so a root that later moves to another drive is refused rather than silently re-measured. No caller can bypass it to reach the gateway. Every decision it makes — allow or refuse — is recorded on the `gdrive_scoped.audit` logger with structured `decision`, `reason` and `file_id`.
 
-Descendant folders are enumerated with one `mimeType = folder` query over everything the Drive Identity can see, filtered to the configured location, and reused for `GDRIVE_FOLDER_MAP_TTL_SECONDS` (default 60). The item under authorization is always read live; only the chain above it comes from that map. ADR 0005 records what the window exposes and what it cannot.
+Descendant folders are enumerated with one `mimeType = folder` query over everything the Drive Identity can see, filtered to the measured location, and reused for `GDRIVE_FOLDER_MAP_TTL_SECONDS` (default 60). The item under authorization is always read live; only the chain above it comes from that map. ADR 0005 records what the window exposes and what it cannot.
 
 ### Document service
 
@@ -57,9 +58,9 @@ Parsed documents are cached in process by file ID, MIME type, and Drive modifica
 
 ### Discovery
 
-1. Enumerate every folder the Drive Identity can see with one paginated query, keep those in the configured Drive Location, then rebuild the subtree from `parents`. A folder with anything other than exactly one parent is not descended into, and neither is anything beneath it.
+1. Enumerate every folder the Drive Identity can see with one paginated query, keep those in the measured Drive Location, then rebuild the subtree from `parents`. A folder with anything other than exactly one parent is not descended into, and neither is anything beneath it.
 2. Search using server-generated, escaped Drive queries constrained to those parent folder IDs.
-3. Require every candidate to belong to the configured Drive Location.
+3. Require every candidate to belong to the measured Drive Location.
 4. Exclude trash and shortcuts.
 5. Deduplicate results.
 
@@ -68,7 +69,7 @@ Search queries containing more than 400 folder parents are split into batches. R
 ### Read or metadata
 
 1. Fetch current item metadata from Drive. This read is never served from a cache.
-2. Verify the configured Drive Location: the exact Shared Drive ID, or the absence of a Shared Drive ID for My Drive, and reject trashed items and shortcuts.
+2. Verify the measured Drive Location: the exact Shared Drive ID read from the root folder, or the absence of a `driveId` for My Drive, and reject trashed items and shortcuts.
 3. Require exactly one parent, and require that parent to be a folder in the corpus map.
 4. Reject the operation if ancestry cannot be proven.
 5. Only then fetch or export content, without proving ancestry a second time.

@@ -80,7 +80,9 @@ text, invalid cursors, export limits, rejected credentials and upstream Drive er
 
 Arguments a caller controls before any call is made are not conditions of the corpus, and
 raise builtin `ValueError` as a bug in the adapter: a `limit` or `max_chars` out of range, an
-empty query, a location that contradicts itself, a root that is the alias `root`. The
+empty query, a root that is the alias `root`, a folder-map TTL that is not finite. Reading
+`ScopedDrive.location` before `initialize()` has measured it raises `RuntimeError` for the
+same reason: it is a call made out of order, not a condition of the corpus. The
 entry-point wrapper's `ConfigurationError` in `gdrive_scoped.env` is a `ValueError` for the
 same reason, and nothing under `gdrive_scoped` imports it.
 

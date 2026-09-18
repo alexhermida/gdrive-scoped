@@ -1,6 +1,6 @@
 # ADR 0004: Support My Drive and Shared Drive locations
 
-- Status: Accepted; the Shared Drive request policy superseded by ADR 0010
+- Status: Accepted; the request policy superseded by ADR 0010, the configuration by ADR 0011
 - Date: 2026-08-30
 
 ## Context
@@ -23,6 +23,11 @@ One deployment configures one Drive Location: `shared_drive` or `my_drive`.
 Every query uses the `user` corpus with `includeItemsFromAllDrives`, so membership of the
 drive is not required; the Shared Drive ID is asserted on every item instead. The kind no
 longer has a default anywhere (v0.5.0).
+
+*Amended by ADR 0011:* a deployment no longer configures the Drive Location at all. It is
+measured from the Configured Root Folder's `driveId` and asserted on every item after that,
+so "one deployment configures one Drive Location" reads as *one deployment serves one*, and
+the two request policies collapse into one.
 
 The application continues to request `drive.readonly`; its OAuth grant is broader than the Authorized Subtree, so the application-enforced boundary from ADR 0001 remains mandatory.
 

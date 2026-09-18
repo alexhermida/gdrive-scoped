@@ -1,6 +1,6 @@
 # ADR 0010: Never address the drive; enumerate what the identity can see
 
-- Status: Accepted
+- Status: Accepted; the configured Drive location superseded by ADR 0011
 - Date: 2026-09-11
 - Amends: ADR 0004 (the Shared Drive request policy)
 
@@ -118,3 +118,9 @@ access to those folders, and let the library find the rest.
 Deriving the Drive location from the root folder's own metadata, so that `kind` and the
 Shared Drive ID become optional assertions rather than required inputs, is a separate
 decision with its own question — what happens when the root moves — and is not made here.
+
+*Decided by ADR 0011:* it is derived, and required nowhere. The root is re-read on every
+request, so a root that moves to another drive is refused rather than re-measured. The
+consequence recorded above — "the kind stays mandatory ... a defaulted assertion asserts
+nothing" — no longer holds: there is no assertion to default, because there is no input.
+`includeItemsFromAllDrives` is unconditional from that release on.

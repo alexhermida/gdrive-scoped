@@ -16,7 +16,6 @@ from gdrive_scoped.bench.benchmark_cli import BenchmarkOptions, parse_args, run_
 from gdrive_scoped.bench.evaluation import EvaluationCase, load_cases, save_cases
 from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveItem, SearchPage
 from gdrive_scoped.env import Settings
-from gdrive_scoped.location import DriveKind, DriveLocation
 
 
 class BenchmarkGateway:
@@ -67,7 +66,6 @@ async def test_benchmark_measures_search_and_cold_and_warm_document_reads() -> N
     gateway = BenchmarkGateway()
     benchmark = RetrievalBenchmark(
         gateway=gateway,
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
     cases = [
@@ -102,7 +100,6 @@ async def test_benchmark_measures_search_and_cold_and_warm_document_reads() -> N
 async def test_benchmark_comparison_reports_median_latency_regressions() -> None:
     benchmark = RetrievalBenchmark(
         gateway=BenchmarkGateway(),
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
     cases = [
@@ -200,7 +197,6 @@ async def test_benchmark_comparison_treats_a_different_search_limit_as_a_differe
 async def _timeline_report() -> BenchmarkReport:
     benchmark = RetrievalBenchmark(
         gateway=BenchmarkGateway(),
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
     cases = [
@@ -218,7 +214,6 @@ async def test_benchmark_reports_missing_sources_without_timing_a_different_docu
     gateway = BenchmarkGateway()
     benchmark = RetrievalBenchmark(
         gateway=gateway,
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
     cases = [
@@ -243,7 +238,6 @@ async def test_benchmark_excludes_warmup_drive_calls_from_measured_totals() -> N
     gateway = BenchmarkGateway()
     benchmark = RetrievalBenchmark(
         gateway=gateway,
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
     cases = [
@@ -264,7 +258,6 @@ async def test_benchmark_excludes_warmup_drive_calls_from_measured_totals() -> N
 async def test_benchmark_report_round_trips_as_a_json_artifact(tmp_path: Path) -> None:
     benchmark = RetrievalBenchmark(
         gateway=BenchmarkGateway(),
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
     cases = [
@@ -304,7 +297,6 @@ async def test_benchmark_command_writes_a_successful_live_report(tmp_path: Path)
         read_max_chars=100,
     )
     settings = Settings(
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
 
@@ -349,7 +341,6 @@ async def test_benchmark_command_derives_and_keeps_its_cases_when_the_file_is_ab
         read_max_chars=100,
     )
     settings = Settings(
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
 
@@ -386,7 +377,6 @@ async def test_benchmark_command_reuses_an_existing_cases_file_without_deriving(
         read_max_chars=100,
     )
     settings = Settings(
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
 
@@ -411,7 +401,6 @@ async def test_benchmark_command_says_so_when_no_case_can_be_derived(tmp_path: P
         warmup_iterations=0,
     )
     settings = Settings(
-        location=DriveLocation(DriveKind.SHARED_DRIVE, "drive"),
         root_folder_id="root-folder",
     )
 

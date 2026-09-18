@@ -1,12 +1,15 @@
 """Configuration from the environment, for entry points only.
 
-The core takes a location, a root folder and credentials as arguments and
-reads nothing from the environment — that is what lets one process embed it
-against several corpora, and what keeps a consumer's configuration its own
-business. This module is the convenience wrapper the repository's own entry
-points use: the benchmark, the census script, the live tests and the example
-server. Nothing under `gdrive_scoped` imports it, and `tests/test_public_api`
-holds that line.
+The core takes a root folder and credentials as arguments and reads nothing
+from the environment — that is what lets one process embed it against several
+corpora, and what keeps a consumer's configuration its own business. This
+module is the convenience wrapper the repository's own entry points use: the
+benchmark, the census script, the live tests and the example server. Nothing
+under `gdrive_scoped` imports it, and `tests/test_public_api` holds that line.
+
+There is nothing here about *where* the corpus lives, because that is not
+configuration: `ScopedDrive.initialize()` measures the Drive location from the
+root folder's own metadata.
 
 The variable names are deliberately the ones a deployment already sets, so a
 single environment file serves both a hosted provider and a local run.
@@ -23,11 +26,8 @@ import google.auth
 from google.auth.credentials import Credentials
 
 from gdrive_scoped.credentials import DRIVE_READONLY_SCOPE, refresh_token_credentials
-from gdrive_scoped.location import DriveKind, DriveLocation
 from gdrive_scoped.scope import DEFAULT_FOLDER_MAP_TTL_SECONDS
 
-DRIVE_KIND_ENV = "GDRIVE_DRIVE_KIND"
-SHARED_DRIVE_ID_ENV = "GDRIVE_SHARED_DRIVE_ID"
 ROOT_FOLDER_ID_ENV = "GDRIVE_ROOT_FOLDER_ID"
 FOLDER_MAP_TTL_ENV = "GDRIVE_FOLDER_MAP_TTL_SECONDS"
 CLIENT_ID_ENV = "GDRIVE_OAUTH_CLIENT_ID"
@@ -43,9 +43,14 @@ class ConfigurationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    """One corpus, as described by the environment."""
+    """One corpus, as described by the environment.
 
-    location: DriveLocation
+    A corpus is one folder, so a root folder ID is the whole of its
+    description. The Drive location it lives in used to be described here too,
+    as a kind plus a Shared Drive ID that the library asserted the root against;
+    it is now read off the root folder itself, where Drive already records it.
+    """
+
     root_folder_id: str
     #: The staleness window for folder ancestry. Raising it widens the time a
     #: folder moved out of the corpus keeps serving its contents; 0 removes it.
@@ -53,50 +58,26 @@ class Settings:
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str] | None = None) -> Settings:
-        """Load settings without defaulting either scope identifier.
+        """Load settings without defaulting the root folder.
 
-        Neither the drive kind nor the root folder has a default. The kind is an
-        assertion about where the root lives, checked against every item; a
-        defaulted assertion asserts nothing.
+        There is no sensible default for which folder a corpus is, and a
+        defaulted one would silently serve somebody else's. Everything else is
+        either optional or measured: where that folder lives is read from its
+        own Drive metadata by `ScopedDrive.initialize()`.
         """
 
         values = os.environ if environ is None else environ
-        raw_drive_kind = values.get(DRIVE_KIND_ENV, "").strip()
         root_folder_id = values.get(ROOT_FOLDER_ID_ENV, "").strip()
-        shared_drive_id = values.get(SHARED_DRIVE_ID_ENV, "").strip()
 
-        missing = [
-            name
-            for name, value in (
-                (DRIVE_KIND_ENV, raw_drive_kind),
-                (ROOT_FOLDER_ID_ENV, root_folder_id),
-            )
-            if not value
-        ]
-        if missing:
-            raise ConfigurationError(f"Missing required configuration: {', '.join(missing)}")
-
-        try:
-            drive_kind = DriveKind(raw_drive_kind)
-        except ValueError as error:
-            raise ConfigurationError(
-                f"Invalid {DRIVE_KIND_ENV}: expected shared_drive or my_drive"
-            ) from error
-
+        if not root_folder_id:
+            raise ConfigurationError(f"Missing required configuration: {ROOT_FOLDER_ID_ENV}")
         if root_folder_id == "root":
             raise ConfigurationError(
                 f"{ROOT_FOLDER_ID_ENV} must be a folder ID, not the alias 'root'. "
                 "The whole of a Drive is not a corpus."
             )
-        if drive_kind is DriveKind.SHARED_DRIVE and not shared_drive_id:
-            raise ConfigurationError(f"Missing required configuration: {SHARED_DRIVE_ID_ENV}")
-        if drive_kind is DriveKind.MY_DRIVE and shared_drive_id:
-            raise ConfigurationError(
-                f"{SHARED_DRIVE_ID_ENV} must not be set when {DRIVE_KIND_ENV}=my_drive"
-            )
 
         return cls(
-            location=DriveLocation(drive_kind, shared_drive_id or None),
             root_folder_id=root_folder_id,
             folder_map_ttl_seconds=_read_folder_map_ttl(values),
         )

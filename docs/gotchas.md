@@ -5,7 +5,7 @@ These constraints are part of the design, not incidental implementation details.
 ## Hierarchy and scope
 
 - Drive has no descendant query operator. `'<folder-id>' in parents` finds direct children only.
-- `driveId` is populated only for Shared Drive items. Treat its absence as My Drive location metadata, not as missing metadata.
+- `driveId` is populated only for Shared Drive items. Treat its absence as My Drive location metadata, not as missing metadata. This is what makes the Drive Location measurable: the Configured Root Folder's own `driveId` says which Drive the corpus is in, so nothing has to be configured and then asserted against it (ADR 0011).
 - `owners` is not populated for items in a Shared Drive: the drive owns them. `lastModifyingUser` is populated in both locations and is the person field a citation can rely on.
 - `parents` is represented as a list, although current Drive items support one parent. Treat zero or multiple parents as unproven ancestry and fail closed.
 - Shortcuts can point outside the Authorized Subtree. Every shortcut is excluded, and a shortcut target is never requested or followed.
@@ -21,9 +21,10 @@ These constraints are part of the design, not incidental implementation details.
 
 ## My Drive requests
 
-- Use `corpora=user`, omit `driveId`, and set `includeItemsFromAllDrives=false`.
+- The request shape is the same one Shared Drives get: `corpora=user`, no `driveId`, `includeItemsFromAllDrives=true`. The gateway is not told where the corpus is, so it asks for everything the identity can see and the boundary above it drops what is not in the measured location. Setting `includeItemsFromAllDrives=false` would narrow the answer, never the corpus.
+- That widening has a cost, not a risk: a My Drive corpus now carries the identity's Shared Drive rows through enumeration before discarding them, and enumeration is bounded by the identity's reach (ADR 0010). Keep the grant to the corpus.
 - The `user` corpus can include files shared directly with the Drive Identity. Every query must remain parent-constrained and every result must still pass location and ancestry checks.
-- Do not infer My Drive mode from a missing Shared Drive setting. Select it explicitly with `GDRIVE_DRIVE_KIND=my_drive`.
+- Do not infer the Drive Location from a setting. It is read from the Configured Root Folder's `driveId` by `ScopedDrive.initialize()`, which is why that call has to come first.
 
 ## Search behavior
 

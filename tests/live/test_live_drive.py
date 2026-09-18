@@ -36,8 +36,7 @@ pytestmark = [
 async def test_configured_root_can_be_validated_and_listed_read_only() -> None:
     settings = Settings.from_environ()
     scoped_drive = ScopedDrive(
-        gateway=create_gateway(credentials_from_environ(), settings.location),
-        location=settings.location,
+        gateway=create_gateway(credentials_from_environ()),
         root_folder_id=settings.root_folder_id,
     )
 
@@ -45,6 +44,8 @@ async def test_configured_root_can_be_validated_and_listed_read_only() -> None:
     children = await scoped_drive.list_folder()
 
     assert root.id == settings.root_folder_id
+    # Measured from the root, not configured beside it, and asserted from here on.
+    assert scoped_drive.location.contains(root.drive_id)
     # Every listed child is addressable by its own Drive ID, which is what the
     # tools hand back and what a caller may paste from a Drive link.
     assert all(child.id for child in children)
@@ -58,8 +59,7 @@ async def test_configured_root_can_be_validated_and_listed_read_only() -> None:
 async def test_configured_root_can_be_searched_and_read_read_only() -> None:
     settings = Settings.from_environ()
     scoped_drive = ScopedDrive(
-        gateway=create_gateway(credentials_from_environ(), settings.location),
-        location=settings.location,
+        gateway=create_gateway(credentials_from_environ()),
         root_folder_id=settings.root_folder_id,
     )
     await scoped_drive.initialize()

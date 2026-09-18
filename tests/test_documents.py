@@ -8,7 +8,7 @@ import pytest
 from openpyxl import Workbook
 
 from gdrive_scoped.documents import DocumentService
-from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveItem, SearchPage
+from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveGateway, DriveItem, SearchPage
 from gdrive_scoped.errors import (
     EmptyDocument,
     ExportTooLarge,
@@ -18,7 +18,6 @@ from gdrive_scoped.errors import (
 )
 from gdrive_scoped.extractors import ExtractedDocument, ExtractorRegistry, TextBlock
 from gdrive_scoped.extractors.registry import ExtractionPlan
-from gdrive_scoped.location import DriveKind, DriveLocation
 from gdrive_scoped.scope import ScopedDrive, audit_caller
 
 
@@ -32,8 +31,16 @@ def _registry_returning(document: ExtractedDocument) -> ExtractorRegistry:
     return registry
 
 
-SHARED_DRIVE = DriveLocation(DriveKind.SHARED_DRIVE, "drive")
-MY_DRIVE = DriveLocation(DriveKind.MY_DRIVE)
+async def _scope(gateway: DriveGateway) -> ScopedDrive:
+    """A scope over `root-folder` that has measured its Drive location.
+
+    `initialize()` is what takes that measurement, from the root folder's own
+    `driveId`, so nothing can be asked of a scope before it.
+    """
+
+    scoped_drive = ScopedDrive(gateway, "root-folder")
+    await scoped_drive.initialize()
+    return scoped_drive
 
 
 class SearchGateway:
@@ -116,7 +123,7 @@ async def test_keyword_search_covers_nested_folders_and_returns_relative_paths()
     plans = DriveItem("plans", "Plans", FOLDER_MIME_TYPE, "drive", parents=("finance",))
     report = DriveItem("report", "Budget.md", "text/markdown", "drive", parents=("plans",))
     gateway = SearchGateway(root, finance, plans, report, search_results=[report, report])
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     results = await service.search_documents("budget")
 
@@ -146,7 +153,7 @@ async def test_keyword_search_in_my_drive_drops_cross_location_results() -> None
         cross_location,
         search_results=[report, cross_location],
     )
-    service = DocumentService(ScopedDrive(gateway, MY_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     results = await service.search_documents("budget")
 
@@ -170,7 +177,7 @@ async def test_keyword_search_chunks_large_folder_sets_before_calling_drive() ->
         for index in range(401)
     ]
     gateway = SearchGateway(root, *folders, search_results=[])
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     await service.search_documents("budget")
 
@@ -199,7 +206,7 @@ async def test_keyword_search_keeps_drive_relevance_order_within_one_batch() -> 
     # Drive answered with the older document first: it is the more relevant one,
     # and relevance is the only ranking signal a keyword search has.
     gateway = SearchGateway(root, older, newer, search_results=[older, newer])
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     results = await service.search_documents("report")
 
@@ -247,7 +254,7 @@ async def test_keyword_search_interleaves_parent_batches_by_rank() -> None:
         first_batch=first_batch,
         second_batch=second_batch,
     )
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     results = await service.search_documents("report", limit=3)
 
@@ -262,9 +269,7 @@ async def test_keyword_search_interleaves_parent_batches_by_rank() -> None:
 @pytest.mark.parametrize(("query", "limit"), [("", 10), ("budget", 0), ("budget", 51)])
 async def test_keyword_search_rejects_unbounded_or_empty_requests(query: str, limit: int) -> None:
     root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
-    service = DocumentService(
-        ScopedDrive(SearchGateway(root, search_results=[]), SHARED_DRIVE, "root-folder")
-    )
+    service = DocumentService(await _scope(SearchGateway(root, search_results=[])))
 
     with pytest.raises(ValueError):
         await service.search_documents(query, limit=limit)
@@ -283,9 +288,7 @@ async def test_folder_listing_is_bounded_and_continues_with_a_cursor() -> None:
         )
         for index in range(3)
     ]
-    service = DocumentService(
-        ScopedDrive(SearchGateway(root, *documents, search_results=[]), SHARED_DRIVE, "root-folder")
-    )
+    service = DocumentService(await _scope(SearchGateway(root, *documents, search_results=[])))
 
     first = await service.list_folder(limit=2)
     second = await service.list_folder(cursor=first.next_cursor, limit=2)
@@ -309,7 +312,7 @@ async def test_plain_text_reads_continue_without_skipping_or_repeating_content()
     )
     original = b"abcdefghijklmnopqrstuvwxyz"
     gateway = SearchGateway(root, document, search_results=[], blobs={document.id: original})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
     [listed] = (await service.list_folder()).items
 
     chunks: list[str] = []
@@ -342,7 +345,7 @@ async def test_google_docs_are_exported_as_markdown() -> None:
         search_results=[],
         blobs={document.id: b"# Plan\n\nShip it."},
     )
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
     [listed] = (await service.list_folder()).items
 
     result = await service.read_document(listed.id)
@@ -370,7 +373,7 @@ async def test_reads_prefer_natural_sheet_boundaries() -> None:
     gateway = SearchGateway(
         root, document, search_results=[], blobs={document.id: content.getvalue()}
     )
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
     [listed] = (await service.list_folder()).items
 
     first = await service.read_document(listed.id, max_chars=6)
@@ -386,9 +389,7 @@ async def test_reads_prefer_natural_sheet_boundaries() -> None:
 async def test_folder_listing_rejects_a_negative_cursor() -> None:
     root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
     document = DriveItem("document", "notes.txt", "text/plain", "drive", parents=("root-folder",))
-    service = DocumentService(
-        ScopedDrive(SearchGateway(root, document, search_results=[]), SHARED_DRIVE, "root-folder")
-    )
+    service = DocumentService(await _scope(SearchGateway(root, document, search_results=[])))
 
     # "LTE" is base64 for "-1": as a slice bound it would page from the end.
     with pytest.raises(InvalidCursor):
@@ -402,7 +403,7 @@ async def test_an_invalid_cursor_is_rejected_before_anything_is_downloaded() -> 
     root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
     document = DriveItem("document", "notes.txt", "text/plain", "drive", parents=("root-folder",))
     gateway = SearchGateway(root, document, search_results=[], blobs={document.id: b"notes"})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     with pytest.raises(InvalidCursor):
         await service.read_document(document.id, cursor="A")
@@ -427,9 +428,7 @@ async def test_a_document_the_parser_cannot_read_is_a_drive_error() -> None:
     registry._plans["application/pdf"] = ExtractionPlan(  # noqa: SLF001
         export_mime_type=None, extractor=explode
     )
-    service = DocumentService(
-        ScopedDrive(gateway, SHARED_DRIVE, "root-folder"), extractors=registry
-    )
+    service = DocumentService(await _scope(gateway), extractors=registry)
 
     with pytest.raises(ExtractionFailed, match="Broken.pdf could not be parsed"):
         await service.read_document(document.id)
@@ -440,7 +439,7 @@ async def test_read_rejects_an_invalid_cursor() -> None:
     root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
     document = DriveItem("document", "notes.txt", "text/plain", "drive", parents=("root-folder",))
     gateway = SearchGateway(root, document, search_results=[], blobs={document.id: b"notes"})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
     [listed] = (await service.list_folder()).items
 
     with pytest.raises(InvalidCursor, match="Invalid read cursor"):
@@ -468,7 +467,7 @@ async def test_cached_content_is_not_returned_after_a_document_moves_outside() -
         search_results=[],
         blobs={document.id: b"cached content"},
     )
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
     [listed] = (await service.list_folder()).items
     await service.read_document(listed.id)
     gateway.items[document.id] = replace(document, parents=(outside.id,))
@@ -491,7 +490,7 @@ async def test_search_enumerates_the_corpus_once_instead_of_walking_folder_by_fo
         for index in range(20)
     ]
     gateway = SearchGateway(root, *folders, search_results=[])
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     await service.search_documents("budget")
 
@@ -514,7 +513,7 @@ async def test_one_read_performs_one_ancestry_proof() -> None:
     gateway = SearchGateway(
         root, plans, document, search_results=[document], blobs={document.id: b"notes"}
     )
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
     [found] = (await service.search_documents("notes")).items
     gateway.metadata_reads.clear()
 
@@ -548,7 +547,7 @@ async def test_a_chunk_never_exceeds_the_byte_ceiling_even_in_cjk() -> None:
     gateway = SearchGateway(
         root, item, search_results=[], blobs={item.id: "承認済".encode() * 20_000}
     )
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     result = await service.read_document(item.id, max_chars=40_000)
 
@@ -563,7 +562,7 @@ async def test_a_partial_read_says_that_it_is_partial() -> None:
     body = b"a" * 1_000
     root, item = text_document("notes.txt", body)
     gateway = SearchGateway(root, item, search_results=[], blobs={item.id: body})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     result = await service.read_document(item.id, max_chars=100)
 
@@ -579,7 +578,7 @@ async def test_a_complete_read_carries_no_note() -> None:
     body = b"short"
     root, item = text_document("notes.txt", body)
     gateway = SearchGateway(root, item, search_results=[], blobs={item.id: body})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     result = await service.read_document(item.id)
 
@@ -600,7 +599,7 @@ async def test_the_parsed_cache_evicts_instead_of_growing_without_bound() -> Non
     gateway = SearchGateway(
         root, *items, search_results=[], blobs={item.id: b"body" for item in items}
     )
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"), cache_size=2)
+    service = DocumentService(await _scope(gateway), cache_size=2)
 
     for item in items:
         await service.read_document(item.id)
@@ -615,7 +614,7 @@ async def test_a_cached_document_is_not_downloaded_twice() -> None:
     body = b"body"
     root, item = text_document("notes.txt", body)
     gateway = SearchGateway(root, item, search_results=[], blobs={item.id: body})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     await service.read_document(item.id)
     await service.read_document(item.id)
@@ -632,7 +631,7 @@ async def test_an_oversized_blob_is_refused_before_it_is_downloaded() -> None:
         "doc", "huge.txt", "text/plain", "drive", parents=("root-folder",), size=40 * 1024 * 1024
     )
     gateway = SearchGateway(root, huge, search_results=[], blobs={huge.id: b"never read"})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     with pytest.raises(ExportTooLarge, match="40.0 MB"):
         await service.read_document(huge.id)
@@ -648,7 +647,7 @@ async def test_a_scanned_pdf_is_reported_as_empty_rather_than_unsupported() -> N
     scan = DriveItem("doc", "scan.pdf", "application/pdf", "drive", parents=("root-folder",))
     gateway = SearchGateway(root, scan, search_results=[], blobs={scan.id: b"%PDF-"})
     service = DocumentService(
-        ScopedDrive(gateway, SHARED_DRIVE, "root-folder"),
+        await _scope(gateway),
         extractors=_registry_returning(ExtractedDocument((TextBlock("page 1", "\n\n  \n"),))),
     )
 
@@ -663,7 +662,7 @@ async def test_an_empty_text_file_does_not_blame_a_scanner() -> None:
     body = b"   \n\n "
     root, item = text_document("empty.txt", body)
     gateway = SearchGateway(root, item, search_results=[], blobs={item.id: body})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     with pytest.raises(EmptyDocument) as raised:
         await service.read_document(item.id)
@@ -676,7 +675,7 @@ async def test_max_chars_is_capped_below_what_the_transport_can_carry() -> None:
     body = b"a" * 10
     root, item = text_document("notes.txt", body)
     gateway = SearchGateway(root, item, search_results=[], blobs={item.id: body})
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     with pytest.raises(ValueError, match="between 1 and 40000"):
         await service.read_document(item.id, max_chars=50_000)
@@ -692,7 +691,7 @@ async def test_the_byte_ceiling_holds_when_block_boundaries_pull_the_cut_around(
     blocks = tuple(TextBlock(f"page {index + 1}", "承認済" * 4_000) for index in range(10))
     gateway = SearchGateway(root, slides, search_results=[], blobs={slides.id: b"%PDF-"})
     service = DocumentService(
-        ScopedDrive(gateway, SHARED_DRIVE, "root-folder"),
+        await _scope(gateway),
         extractors=_registry_returning(ExtractedDocument(blocks)),
     )
 
@@ -716,7 +715,7 @@ async def test_keyword_search_asks_each_batch_for_one_more_than_the_limit() -> N
     for a count nobody sees."""
     root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
     gateway = SearchGateway(root, search_results=[])
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     await service.search_documents("budget", limit=7)
 
@@ -735,7 +734,7 @@ async def test_keyword_search_is_truncated_when_drive_had_more_to_give() -> None
     # Exactly `limit` hits came back, so the count alone would say "not truncated";
     # Drive's continuation token is what says otherwise.
     gateway = SearchGateway(root, *hits, search_results=hits, has_more=True)
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     results = await service.search_documents("budget", limit=2)
 
@@ -748,7 +747,7 @@ async def test_keyword_search_is_not_truncated_when_every_match_was_returned() -
     root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
     hit = DriveItem("hit", "Hit.md", "text/markdown", "drive", parents=("root-folder",))
     gateway = SearchGateway(root, hit, search_results=[hit])
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     results = await service.search_documents("budget", limit=2)
 
@@ -780,7 +779,7 @@ async def test_every_operation_leaves_one_audit_record_naming_the_caller(
     gateway = SearchGateway(
         root, report, search_results=[report], blobs={"report": b"# Budget\n\nnumbers"}
     )
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     token = audit_caller.set("alice@example.org")
     try:
@@ -824,7 +823,7 @@ async def test_an_operation_without_a_known_caller_is_still_recorded(
 ) -> None:
     root = DriveItem("root-folder", "Corpus", FOLDER_MIME_TYPE, "drive")
     gateway = SearchGateway(root, search_results=[])
-    service = DocumentService(ScopedDrive(gateway, SHARED_DRIVE, "root-folder"))
+    service = DocumentService(await _scope(gateway))
 
     with caplog.at_level(logging.INFO, logger="gdrive_scoped.audit"):
         await service.search_documents("budget")

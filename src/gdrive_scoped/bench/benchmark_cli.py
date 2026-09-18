@@ -87,7 +87,6 @@ async def run_benchmark(
     cases, derived_cases_path = await _resolve_cases(options, settings, gateway)
     report = await RetrievalBenchmark(
         gateway=gateway,
-        location=settings.location,
         root_folder_id=settings.root_folder_id,
         folder_map_ttl_seconds=settings.folder_map_ttl_seconds,
     ).run(
@@ -131,7 +130,6 @@ async def _resolve_cases(
 
     scoped_drive = ScopedDrive(
         gateway=gateway,
-        location=settings.location,
         root_folder_id=settings.root_folder_id,
         folder_map_ttl_seconds=settings.folder_map_ttl_seconds,
     )
@@ -198,7 +196,7 @@ def _regression_percent(value: str) -> float:
 def main(argv: list[str] | None = None) -> int:
     options = parse_args(argv)
     settings = Settings.from_environ()
-    gateway = create_gateway(credentials_from_environ(), settings.location)
+    gateway = create_gateway(credentials_from_environ())
     execution = asyncio.run(_run_as_named_identity(options, settings, gateway))
     _print_summary(execution, options.output_path)
     return execution.exit_code

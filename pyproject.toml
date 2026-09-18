@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gdrive-scoped"
-version = "0.7.1"
+version = "0.8.0"
 description = "Read-only, folder-scoped access to one Google Drive subtree, for LLM tools"
 readme = "README.md"
 license = "MIT"

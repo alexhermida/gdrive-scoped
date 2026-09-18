@@ -4,13 +4,8 @@ import pytest
 from google.oauth2.credentials import Credentials as UserCredentials
 
 from gdrive_scoped.env import ConfigurationError, Settings, credentials_from_environ
-from gdrive_scoped.location import DriveKind, DriveLocation
 
-SHARED = {
-    "GDRIVE_DRIVE_KIND": "shared_drive",
-    "GDRIVE_SHARED_DRIVE_ID": "drive-123",
-    "GDRIVE_ROOT_FOLDER_ID": "folder-456",
-}
+CORPUS = {"GDRIVE_ROOT_FOLDER_ID": "folder-456"}
 OAUTH = {
     "GDRIVE_OAUTH_CLIENT_ID": "client",
     "GDRIVE_OAUTH_CLIENT_SECRET": "secret",
@@ -18,54 +13,42 @@ OAUTH = {
 }
 
 
-def test_configuration_loads_one_shared_drive_root() -> None:
+def test_configuration_describes_a_corpus_with_its_root_folder_alone() -> None:
+    """One folder is the whole description. Where that folder lives is not
+    configuration — `ScopedDrive.initialize()` measures it from the folder."""
+
+    settings = Settings.from_environ({"GDRIVE_ROOT_FOLDER_ID": " folder-456 "})
+
+    assert settings == Settings(root_folder_id="folder-456")
+
+
+def test_configuration_ignores_the_drive_variables_it_no_longer_reads() -> None:
+    """An operator upgrading has them in `.env`, and a stale assertion about
+    where the root lives must neither be honoured nor complained about."""
+
     settings = Settings.from_environ(
         {
-            "GDRIVE_DRIVE_KIND": " shared_drive ",
-            "GDRIVE_SHARED_DRIVE_ID": " drive-123 ",
-            "GDRIVE_ROOT_FOLDER_ID": " folder-456 ",
+            "GDRIVE_ROOT_FOLDER_ID": "folder-456",
+            "GDRIVE_DRIVE_KIND": "my_drive",
+            "GDRIVE_SHARED_DRIVE_ID": "drive-123",
         }
     )
 
-    assert settings == Settings(
-        location=DriveLocation(DriveKind.SHARED_DRIVE, shared_drive_id="drive-123"),
-        root_folder_id="folder-456",
-    )
-
-
-def test_configuration_loads_one_my_drive_root() -> None:
-    settings = Settings.from_environ(
-        {"GDRIVE_DRIVE_KIND": "my_drive", "GDRIVE_ROOT_FOLDER_ID": "folder-456"}
-    )
-
-    assert settings == Settings(
-        location=DriveLocation(DriveKind.MY_DRIVE), root_folder_id="folder-456"
-    )
+    assert settings == Settings(root_folder_id="folder-456")
 
 
 @pytest.mark.parametrize(
     ("environ", "message"),
     [
-        ({}, "GDRIVE_DRIVE_KIND, GDRIVE_ROOT_FOLDER_ID"),
-        # No default kind: the wrong one does not fail, it scopes every query
-        # to a drive the root is not in and reports an empty corpus.
-        ({"GDRIVE_ROOT_FOLDER_ID": "folder-456"}, "GDRIVE_DRIVE_KIND"),
-        (SHARED | {"GDRIVE_DRIVE_KIND": "personal"}, "expected shared_drive or my_drive"),
-        (SHARED | {"GDRIVE_SHARED_DRIVE_ID": ""}, "GDRIVE_SHARED_DRIVE_ID"),
-        (
-            {
-                "GDRIVE_DRIVE_KIND": "my_drive",
-                "GDRIVE_ROOT_FOLDER_ID": "f",
-                "GDRIVE_SHARED_DRIVE_ID": "d",
-            },
-            "must not be set when GDRIVE_DRIVE_KIND=my_drive",
-        ),
-        (SHARED | {"GDRIVE_ROOT_FOLDER_ID": "root"}, "not the alias 'root'"),
-        (SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "soon"}, "expected seconds"),
-        (SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "-1"}, "must not be negative"),
+        # No default root folder: there is no folder it would be right to serve.
+        ({}, "GDRIVE_ROOT_FOLDER_ID"),
+        ({"GDRIVE_ROOT_FOLDER_ID": "  "}, "GDRIVE_ROOT_FOLDER_ID"),
+        (CORPUS | {"GDRIVE_ROOT_FOLDER_ID": "root"}, "not the alias 'root'"),
+        (CORPUS | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "soon"}, "expected seconds"),
+        (CORPUS | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "-1"}, "must not be negative"),
         # float() accepts both; an infinite window would never refresh the folder map.
-        (SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "inf"}, "must be finite"),
-        (SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "nan"}, "must be finite"),
+        (CORPUS | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "inf"}, "must be finite"),
+        (CORPUS | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "nan"}, "must be finite"),
     ],
 )
 def test_configuration_fails_closed(environ: dict[str, str], message: str) -> None:
@@ -74,13 +57,13 @@ def test_configuration_fails_closed(environ: dict[str, str], message: str) -> No
 
 
 def test_the_folder_map_window_can_be_closed_entirely() -> None:
-    settings = Settings.from_environ(SHARED | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "0"})
+    settings = Settings.from_environ(CORPUS | {"GDRIVE_FOLDER_MAP_TTL_SECONDS": "0"})
 
     assert settings.folder_map_ttl_seconds == 0
 
 
 def test_a_configured_refresh_token_builds_credentials_for_that_user() -> None:
-    credentials = credentials_from_environ(SHARED | OAUTH)
+    credentials = credentials_from_environ(CORPUS | OAUTH)
 
     assert isinstance(credentials, UserCredentials)
     assert credentials.refresh_token == "refresh"

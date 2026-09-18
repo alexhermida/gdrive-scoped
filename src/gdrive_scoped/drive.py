@@ -23,7 +23,6 @@ from gdrive_scoped.errors import (
     EnumerationBudgetExceeded,
     ExportTooLarge,
 )
-from gdrive_scoped.location import DriveKind, DriveLocation
 
 logger = logging.getLogger(__name__)
 
@@ -161,9 +160,8 @@ class _PerThreadHttp:
 class GoogleDriveGateway:
     """Read-only adapter over the official Google Drive discovery client."""
 
-    def __init__(self, service: Any, location: DriveLocation, credentials: Credentials) -> None:
+    def __init__(self, service: Any, credentials: Credentials) -> None:
         self._service = service
-        self._location = location
         self._metadata_http = _PerThreadHttp(credentials, METADATA_TIMEOUT_SECONDS)
         self._transfer_http = _PerThreadHttp(credentials, DOWNLOAD_TIMEOUT_SECONDS)
 
@@ -284,9 +282,19 @@ class GoogleDriveGateway:
             # with `includeItemsFromAllDrives` answered every query identically
             # for a member and for that grantee (ADR 0010). The Shared Drive ID is
             # still asserted on every item, by `DriveLocation.contains`.
+            #
+            # `includeItemsFromAllDrives` is unconditional because the gateway no
+            # longer knows the location: it is measured from the Configured Root
+            # Folder's own `driveId` by `ScopedDrive.initialize`, one layer up.
+            # Widening the request cannot widen the corpus — `DriveLocation.contains`
+            # asserts the measured drive on every item enumerated, listed, searched
+            # or read, so a My Drive corpus drops the Shared Drive rows this now
+            # returns. What it costs is those rows: enumeration is bounded by the
+            # identity's reach (ADR 0010), and for a My Drive corpus that reach now
+            # includes any Shared Drive the identity can see.
             list_arguments: dict[str, Any] = {
                 "corpora": "user",
-                "includeItemsFromAllDrives": self._location.kind is DriveKind.SHARED_DRIVE,
+                "includeItemsFromAllDrives": True,
             }
             if order_by is not None:
                 list_arguments["orderBy"] = order_by
@@ -331,16 +339,20 @@ class GoogleDriveGateway:
         return await asyncio.to_thread(_execute_sync, request, http)
 
 
-def create_gateway(credentials: Credentials, location: DriveLocation) -> GoogleDriveGateway:
+def create_gateway(credentials: Credentials) -> GoogleDriveGateway:
     """Build the read-only Drive adapter over credentials the caller supplies.
 
     Credentials are an argument rather than something discovered here, so the
     same gateway serves a local process on ADC and a deployment on a bot
     user's refresh token. See `gdrive_scoped.credentials` for both builders.
+
+    Nothing else is needed: the gateway sends the same request shape wherever
+    the corpus lives, and the location is measured from the root folder by
+    `ScopedDrive`.
     """
 
     service = build("drive", "v3", credentials=credentials, cache_discovery=False)
-    return GoogleDriveGateway(service=service, location=location, credentials=credentials)
+    return GoogleDriveGateway(service=service, credentials=credentials)
 
 
 def _execute_sync(request: Any, http: _PerThreadHttp) -> Any:

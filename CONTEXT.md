@@ -2,13 +2,14 @@
 
 ## Drive Location
 
-The storage location one deployment is configured for: either the Drive Identity's My Drive
-context or one Shared Drive.
+The storage location one deployment serves: either the Drive Identity's My Drive context or
+one Shared Drive. It is *measured*, not configured — `ScopedDrive.initialize()` reads it from
+the Configured Root Folder's own Drive metadata — and asserted on every item after that.
 
 ## Shared Drive
 
-One supported Drive Location. Shared Drive items carry the configured Shared Drive ID in their
-Drive metadata.
+One supported Drive Location. Shared Drive items carry the measured Shared Drive ID in their
+Drive metadata; everything else carries no `driveId` at all.
 
 ## My Drive
 
@@ -18,7 +19,8 @@ Identity.
 
 ## Configured Root Folder
 
-The folder selected as the root of the corpus. It belongs to the configured Drive Location.
+The folder selected as the root of the corpus, and the only thing a deployment configures
+about it. Its own metadata defines the Drive Location the rest of the corpus is held to.
 
 ## Authorized Subtree
 
@@ -27,7 +29,7 @@ the current Drive hierarchy, so it changes when Drive does.
 
 ## Drive Identity
 
-The Google identity whose credential the library uses to reach the configured Drive Location.
+The Google identity whose credential the library uses to reach the Drive Location.
 It can usually see more of Drive than the Authorized Subtree; that gap is what the boundary
 exists to close.
 

@@ -1,4 +1,4 @@
-"""Configured Google Drive storage location."""
+"""The Google Drive storage location one corpus lives in."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ class DriveKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class DriveLocation:
-    """One configured Drive location for a server process."""
+    """One Drive location, measured from the Configured Root Folder."""
 
     kind: DriveKind
     shared_drive_id: str | None = None
@@ -25,6 +25,21 @@ class DriveLocation:
             raise ValueError("A Shared Drive location requires a Shared Drive ID")
         if self.kind is DriveKind.MY_DRIVE and self.shared_drive_id is not None:
             raise ValueError("A My Drive location cannot have a Shared Drive ID")
+
+    @classmethod
+    def of(cls, item_drive_id: str | None) -> DriveLocation:
+        """The location the Drive metadata of one item places it in.
+
+        Drive fills `driveId` for Shared Drive items and leaves it out
+        everywhere else, so the field answers the question by itself: absent is
+        My Drive, present names the Shared Drive that owns the item. Reading it
+        off the Configured Root Folder is what lets the location be measured
+        rather than configured and then asserted against the root.
+        """
+
+        if item_drive_id is None:
+            return cls(DriveKind.MY_DRIVE)
+        return cls(DriveKind.SHARED_DRIVE, item_drive_id)
 
     def contains(self, item_drive_id: str | None) -> bool:
         """Return whether Drive metadata belongs to this location."""

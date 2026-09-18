@@ -84,13 +84,21 @@ class AuthorizedItem:
 
 @dataclass(slots=True)
 class ScopedDrive:
-    """Authorize every item against one Drive location and root folder."""
+    """Authorize every item against one root folder and the Drive location holding it.
+
+    The location is not configured: `initialize()` measures it from the
+    Configured Root Folder's own metadata and every item is asserted against
+    that measurement afterwards. So `initialize()` has to be awaited before
+    anything else is asked of this object.
+    """
 
     gateway: DriveGateway
-    location: DriveLocation
     root_folder_id: str
     folder_map_ttl_seconds: float = DEFAULT_FOLDER_MAP_TTL_SECONDS
     clock: Callable[[], float] = time.monotonic
+    #: Measured by `initialize()` from the root folder, and read through the
+    #: `location` property, which says so rather than handing out `None`.
+    _location: DriveLocation | None = field(default=None, init=False, repr=False)
     _folder_paths: dict[str, str] | None = field(default=None, init=False, repr=False)
     _folder_paths_expiry: float = field(default=0.0, init=False, repr=False)
     #: Bumped by every completed enumeration. A task that waited on the lock
@@ -121,18 +129,42 @@ class ScopedDrive:
                 "folder_map_ttl_seconds must be finite and not negative; 0 closes the window"
             )
 
+    @property
+    def location(self) -> DriveLocation:
+        """The Drive location this corpus is in, as measured from its root folder.
+
+        Readable only once `initialize()` has measured it. Returning a guess
+        before then — My Drive, say — would be a boundary decision made on no
+        evidence, and every containment check reads this.
+        """
+
+        if self._location is None:
+            raise RuntimeError(
+                "The Drive location is measured from the configured root folder: "
+                "await initialize() first"
+            )
+        return self._location
+
     async def initialize(self) -> DriveItem:
-        """Validate and return the Configured Root Folder."""
+        """Validate the Configured Root Folder and measure the Drive location from it.
+
+        Drive reports `driveId` on the root's own metadata — absent for My
+        Drive, present for the Shared Drive that owns it — so where the corpus
+        lives is an observation, not something an operator restates and the
+        library checks them on. The measurement is taken once, here, and is
+        asserted on every item after that, the root included: `_validated_root`
+        re-reads the root and runs it through `_check_live_item`, so a root that
+        later moves to another drive is refused rather than quietly re-measured.
+        """
 
         root = await self.gateway.get_item(self.root_folder_id)
         if root.id != self.root_folder_id:
             raise ScopeViolation("Drive returned unexpected root metadata")
-        if not self.location.contains(root.drive_id):
-            raise ScopeViolation("Configured root does not belong to the configured Drive location")
         if root.mime_type != FOLDER_MIME_TYPE:
             raise ScopeViolation("Configured root is not a folder")
         if root.trashed:
             raise ScopeViolation("Configured root is trashed")
+        self._location = DriveLocation.of(root.drive_id)
         return root
 
     async def list_folder(self, folder_id: str | None = None) -> list[ScopedItem]:
@@ -325,7 +357,7 @@ class ScopedDrive:
         Drive has no descendant operator, so a subtree can only be expressed by naming
         every folder in it - but naming them does not require *visiting* them one at a
         time. One `mimeType = folder` query returns every folder the Drive Identity can
-        see, in the configured location or not; the location check drops the rest and
+        see, in the measured location or not; the location check drops the rest and
         the subtree is arithmetic on `parents` after that. Its cost is the identity's
         reach rather than the corpus - one page per thousand folders - which is why a
         deployment keeps that reach to the corpus (ADR 0010).

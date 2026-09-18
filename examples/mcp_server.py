@@ -11,10 +11,11 @@ packaged or published.
 
 What an adapter owes the library, all four visible below:
 
-1. Build credentials and a location, and hand them in. The core discovers
-   neither.
-2. `await scoped_drive.initialize()` once, before serving. It proves the
-   configured root exists and is a folder in the configured Drive.
+1. Build credentials and hand them in. The core discovers none.
+2. `await scoped_drive.initialize()` once, before serving, and before anything
+   else is asked of the scope. It proves the configured root exists and is a
+   live folder, and measures which Drive it lives in — the location every later
+   item is checked against.
 3. Translate `DriveError` into whatever the wire calls a failure. Every
    deliberate refusal — an item outside the corpus above all — is in that
    hierarchy, and a caller that sees a bare "internal error" instead cannot
@@ -119,8 +120,7 @@ async def _translated[T](operation: Awaitable[T]) -> T:
 
 def build_service(settings: Settings) -> DocumentService:
     scoped_drive = ScopedDrive(
-        gateway=create_gateway(credentials_from_environ(), settings.location),
-        location=settings.location,
+        gateway=create_gateway(credentials_from_environ()),
         root_folder_id=settings.root_folder_id,
         folder_map_ttl_seconds=settings.folder_map_ttl_seconds,
     )

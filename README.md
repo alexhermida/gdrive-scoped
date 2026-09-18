@@ -3,19 +3,17 @@
 Read-only access to one configured Google Drive folder and its current descendants, for LLM
 tools. The folder may be in My Drive or in one Shared Drive.
 
-It is a **library**. The core takes credentials and a location as arguments, reads no
+It is a **library**. The core takes credentials and a root folder as arguments, reads no
 environment variable, and imports no MCP — so an adapter decides what it becomes: an MCP
 server, a hosted provider, an agent's toolset, a script.
 
 ```python
 from gdrive_scoped import DocumentService, ScopedDrive, create_gateway
 from gdrive_scoped.credentials import refresh_token_credentials
-from gdrive_scoped.location import DriveKind, DriveLocation
 
-location = DriveLocation(DriveKind.SHARED_DRIVE, shared_drive_id="0A...")
-gateway = create_gateway(refresh_token_credentials(...), location)
-scoped = ScopedDrive(gateway, location, root_folder_id="1U...")
-await scoped.initialize()
+gateway = create_gateway(refresh_token_credentials(...))
+scoped = ScopedDrive(gateway, root_folder_id="1U...")
+await scoped.initialize()  # also measures `scoped.location`
 
 service = DocumentService(scoped)
 results = await service.search_documents("safety report", limit=10)
@@ -34,6 +32,11 @@ A file that moves out, is trashed, or loses its permissions is refused immediate
 exception being a *folder* moved out of the subtree, which keeps serving until the folder map
 expires (ADR 0005; set the TTL to `0` to close that window at the cost of an enumeration per
 request).
+
+Which Drive that root is in — My Drive, or one Shared Drive — is **measured, not configured**.
+`initialize()` reads it off the root folder's own metadata, publishes it as
+`ScopedDrive.location`, and asserts it on every item afterwards, the root included. So
+`initialize()` has to be awaited before anything else is asked of a scope (ADR 0011).
 
 The Drive Identity needs the root folder shared with it, and nothing more: no query addresses
 a Shared Drive by ID, so membership is not required (ADR 0010). Discovery enumerates every
@@ -74,9 +77,7 @@ entry points (`gdrive_scoped.env`), never by the library:
 
 | Variable | |
 | --- | --- |
-| `GDRIVE_DRIVE_KIND` | `shared_drive` or `my_drive`. Required — there is no default: it is an assertion about where the root lives, checked against every item, and a defaulted assertion asserts nothing. |
-| `GDRIVE_SHARED_DRIVE_ID` | Required for `shared_drive`, and must be unset for `my_drive`. Asserted on every item; never sent as a query parameter, so membership of the drive is not needed. |
-| `GDRIVE_ROOT_FOLDER_ID` | The folder ID from a `https://drive.google.com/drive/folders/<id>` URL. The alias `root` is refused: the whole of a Drive is not a corpus. |
+| `GDRIVE_ROOT_FOLDER_ID` | The whole description of a corpus: the folder ID from a `https://drive.google.com/drive/folders/<id>` URL. The alias `root` is refused — the whole of a Drive is not a corpus. Which Drive the folder is in is measured from the folder itself, so there is nothing else to name. |
 | `GDRIVE_FOLDER_MAP_TTL_SECONDS` | Optional, default 60. `0` re-enumerates every request. |
 | `GDRIVE_OAUTH_CLIENT_ID`<br>`GDRIVE_OAUTH_CLIENT_SECRET`<br>`GDRIVE_OAUTH_REFRESH_TOKEN` | A stored refresh token for the Drive Identity. Set all three, or none to fall back to Application Default Credentials. |
 

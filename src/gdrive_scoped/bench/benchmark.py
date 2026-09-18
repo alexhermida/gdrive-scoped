@@ -16,7 +16,6 @@ from pydantic import BaseModel, ConfigDict
 from gdrive_scoped.bench.evaluation import EvaluationCase
 from gdrive_scoped.documents import MAX_READ_CHARS, DocumentService
 from gdrive_scoped.drive import DriveGateway, DriveItem, SearchPage
-from gdrive_scoped.location import DriveLocation
 from gdrive_scoped.scope import DEFAULT_FOLDER_MAP_TTL_SECONDS, ScopedDrive, ScopedItem
 
 Clock = Callable[[], int]
@@ -159,7 +158,6 @@ class RetrievalBenchmark:
     """Measure the real Document Service over one configured Drive gateway."""
 
     gateway: DriveGateway
-    location: DriveLocation
     root_folder_id: str
     folder_map_ttl_seconds: float = DEFAULT_FOLDER_MAP_TTL_SECONDS
     clock: Clock = perf_counter_ns
@@ -177,7 +175,6 @@ class RetrievalBenchmark:
         timed_gateway = _TimedDriveGateway(self.gateway, self.clock)
         scoped_drive = ScopedDrive(
             timed_gateway,
-            self.location,
             self.root_folder_id,
             folder_map_ttl_seconds=self.folder_map_ttl_seconds,
         )
@@ -206,7 +203,8 @@ class RetrievalBenchmark:
         ]
         return BenchmarkReport(
             started_at=started_at,
-            drive_kind=self.location.kind.value,
+            # Measured from the root folder by `initialize()` above, not configured.
+            drive_kind=scoped_drive.location.kind.value,
             corpus_fingerprint=sha256(self.root_folder_id.encode()).hexdigest()[:12],
             iterations=iterations,
             warmup_iterations=warmup_iterations,

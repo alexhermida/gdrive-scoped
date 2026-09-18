@@ -4,10 +4,7 @@ import pytest
 
 from gdrive_scoped.census import PARENT_BATCH_SIZE, Census, format_census, take_census
 from gdrive_scoped.drive import FOLDER_MIME_TYPE, DriveItem, SearchPage
-from gdrive_scoped.location import DriveKind, DriveLocation
 from gdrive_scoped.scope import ScopedDrive
-
-SHARED_DRIVE = DriveLocation(DriveKind.SHARED_DRIVE, "drive-1")
 
 
 class CountingGateway:
@@ -61,8 +58,12 @@ def document(identifier: str, name: str, mime_type: str, parent: str) -> DriveIt
     return DriveItem(identifier, name, mime_type, "drive-1", parents=(parent,))
 
 
-def corpus() -> tuple[ScopedDrive, CountingGateway]:
-    """`root/Plans/Archive` holding a readable pair and one unreadable image."""
+async def corpus() -> tuple[ScopedDrive, CountingGateway]:
+    """`root/Plans/Archive` holding a readable pair and one unreadable image.
+
+    Initialized, because that is what measures the Drive location the census
+    then counts within.
+    """
 
     gateway = CountingGateway(
         folder("root-folder", "Corpus"),
@@ -72,12 +73,14 @@ def corpus() -> tuple[ScopedDrive, CountingGateway]:
         document("b", "Budget.md", "text/markdown", "plans"),
         document("c", "Scan.png", "image/png", "archive"),
     )
-    return ScopedDrive(gateway, SHARED_DRIVE, "root-folder"), gateway
+    scoped_drive = ScopedDrive(gateway, "root-folder")
+    await scoped_drive.initialize()
+    return scoped_drive, gateway
 
 
 @pytest.mark.anyio
 async def test_the_census_counts_the_subtree_and_its_depth() -> None:
-    census = await take_census(corpus()[0])
+    census = await take_census((await corpus())[0])
 
     assert census.folders == 3
     assert census.max_depth == 2
@@ -88,7 +91,7 @@ async def test_the_census_counts_the_subtree_and_its_depth() -> None:
 async def test_the_census_reports_what_no_extractor_can_read() -> None:
     """The only honest way to prioritise extractors: the formats a corpus
     actually holds are never the ones anybody guesses."""
-    census = await take_census(corpus()[0])
+    census = await take_census((await corpus())[0])
 
     assert census.mime_counts == {"text/markdown": 2, "image/png": 1}
     assert census.unreadable_mime_counts == {"image/png": 1}
@@ -99,7 +102,7 @@ async def test_the_census_reports_what_no_extractor_can_read() -> None:
 @pytest.mark.anyio
 async def test_the_census_never_reads_a_document() -> None:
     """Counting a corpus must stay cheap enough to run against production."""
-    scoped_drive, gateway = corpus()
+    scoped_drive, gateway = await corpus()
 
     await take_census(scoped_drive)
 
@@ -128,7 +131,7 @@ def test_an_empty_corpus_reports_a_share_rather_than_dividing_by_zero() -> None:
 
 @pytest.mark.anyio
 async def test_the_report_marks_the_unreadable_types() -> None:
-    report = format_census(await take_census(corpus()[0]))
+    report = format_census(await take_census((await corpus())[0]))
 
     assert "readable: 2/3 (67%)" in report
     assert "! " in report

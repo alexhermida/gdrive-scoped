@@ -20,7 +20,6 @@ from gdrive_scoped.errors import (
     EnumerationBudgetExceeded,
     ExportTooLarge,
 )
-from gdrive_scoped.location import DriveKind, DriveLocation
 
 
 class StaticRequest:
@@ -92,8 +91,8 @@ class RecordingService:
         return self._about
 
 
-def make_gateway(files: RecordingFiles, location: DriveLocation) -> GoogleDriveGateway:
-    return GoogleDriveGateway(RecordingService(files), location, credentials=UserCredentials(None))
+def make_gateway(files: RecordingFiles) -> GoogleDriveGateway:
+    return GoogleDriveGateway(RecordingService(files), credentials=UserCredentials(None))
 
 
 @pytest.mark.anyio
@@ -108,7 +107,7 @@ async def test_gateway_gets_shared_drive_metadata_with_narrow_fields() -> None:
             "capabilities": {"canDownload": True},
         }
     )
-    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = make_gateway(files)
 
     item = await gateway.get_item("file-1")
 
@@ -137,9 +136,7 @@ async def test_gateway_fails_closed_when_download_capability_is_absent() -> None
         }
     )
 
-    item = await make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1")).get_item(
-        "file-1"
-    )
+    item = await make_gateway(files).get_item("file-1")
 
     assert item.can_download is False
 
@@ -167,7 +164,7 @@ async def test_gateway_lists_every_shared_drive_page_and_deduplicates_items() ->
             "page-2": {"files": [report, appendix]},
         },
     )
-    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = make_gateway(files)
 
     items = await gateway.list_children("folder'1")
 
@@ -185,7 +182,16 @@ async def test_gateway_lists_every_shared_drive_page_and_deduplicates_items() ->
 
 
 @pytest.mark.anyio
-async def test_gateway_lists_children_from_my_drive_without_a_shared_drive_id() -> None:
+async def test_gateway_sends_one_request_shape_wherever_the_corpus_lives() -> None:
+    """`includeItemsFromAllDrives` is unconditional.
+
+    The gateway is not told where the corpus is any more — `ScopedDrive`
+    measures that from the root folder — so it asks for everything the identity
+    can see and lets the boundary above it decide. A My Drive corpus therefore
+    sees Shared Drive rows in the raw answer, and `DriveLocation.contains`
+    drops every one of them.
+    """
+
     report = {
         "id": "file-1",
         "name": "Report",
@@ -193,7 +199,7 @@ async def test_gateway_lists_children_from_my_drive_without_a_shared_drive_id() 
         "parents": ["folder-1"],
     }
     files = RecordingFiles({}, list_responses={None: {"files": [report]}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     items = await gateway.list_children("folder-1")
 
@@ -209,7 +215,7 @@ async def test_gateway_lists_children_from_my_drive_without_a_shared_drive_id() 
     ]
     [request] = files.list_arguments
     assert request["corpora"] == "user"
-    assert request["includeItemsFromAllDrives"] is False
+    assert request["includeItemsFromAllDrives"] is True
     assert "driveId" not in request
 
 
@@ -222,7 +228,7 @@ async def test_gateway_searches_my_drive_with_server_generated_parent_constraint
         "parents": ["nested"],
     }
     files = RecordingFiles({}, list_responses={None: {"files": [report]}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     page = await gateway.search_items(("root", "nested"), "quarterly plan", limit=10)
 
@@ -254,7 +260,7 @@ def test_the_gateway_is_built_over_the_credentials_it_is_given(
 
     monkeypatch.setattr(drive, "build", fake_build)
 
-    gateway = create_gateway(credentials, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = create_gateway(credentials)
 
     assert isinstance(gateway, GoogleDriveGateway)
     assert build_arguments == {
@@ -275,7 +281,7 @@ async def test_gateway_builds_search_queries_instead_of_accepting_drive_syntax()
         "parents": ["nested"],
     }
     files = RecordingFiles({}, list_responses={None: {"files": [report]}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = make_gateway(files)
 
     page = await gateway.search_items(("root", "nested"), "budget's \\ plan", limit=10)
 
@@ -294,7 +300,7 @@ async def test_gateway_builds_search_queries_instead_of_accepting_drive_syntax()
 @pytest.mark.anyio
 async def test_gateway_downloads_and_exports_with_read_only_methods() -> None:
     files = RecordingFiles({})
-    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = make_gateway(files)
 
     downloaded = await gateway.download_item("blob-1")
     exported = await gateway.export_item("doc-1", "text/markdown")
@@ -326,7 +332,7 @@ async def test_gateway_enumerates_every_folder_in_one_paginated_query() -> None:
             "page-2": {"files": [folder("archive", "plans")]},
         },
     )
-    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = make_gateway(files)
 
     folders = await gateway.list_folders()
 
@@ -353,7 +359,7 @@ async def test_shared_drive_queries_never_address_the_drive_itself() -> None:
     member and for the grantee, so membership is never required. The Shared
     Drive ID is still asserted, on every item, by `DriveLocation.contains`."""
     files = RecordingFiles({}, list_responses={None: {"files": []}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = make_gateway(files)
 
     await gateway.list_children("root")
     await gateway.list_folders()
@@ -386,7 +392,7 @@ def http_error(status: int, *, reason: str | None = None, message: str = "boom")
 
 def failing_gateway(error: Exception) -> tuple[GoogleDriveGateway, RecordingFiles]:
     files = RecordingFiles(error, list_responses={None: error})
-    return make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1")), files
+    return make_gateway(files), files
 
 
 @pytest.mark.anyio
@@ -451,7 +457,7 @@ async def test_every_request_asks_the_client_to_retry() -> None:
     """The discovery client's own backoff covers 5xx, 429 and the rate-limit
     403 reasons. Not passing this was the only reason it never ran."""
     files = RecordingFiles({"id": "f", "name": "F", "mimeType": "text/plain"})
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     await gateway.get_item("f")
 
@@ -463,7 +469,7 @@ async def test_transfers_get_a_longer_timeout_than_metadata_calls() -> None:
     """An export of a large presentation legitimately takes minutes; a metadata
     call that has not answered in 30s is not going to."""
     files = RecordingFiles({}, list_responses={None: {"files": []}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     await gateway.list_children("folder-1")
     await gateway.download_item("blob-1")
@@ -508,7 +514,7 @@ async def test_a_search_that_outruns_its_page_budget_says_so() -> None:
     claim it cannot support."""
     endless = {"files": [], "nextPageToken": "more"}
     files = RecordingFiles({}, list_responses=dict.fromkeys([None, "more"], endless))
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     page = await gateway.search_items(("root",), "anything", limit=10)
 
@@ -528,7 +534,7 @@ async def test_drives_own_incomplete_search_is_surfaced() -> None:
             "page-2": {"files": []},
         },
     )
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     page = await gateway.search_items(("root",), "anything", limit=10)
 
@@ -538,7 +544,7 @@ async def test_drives_own_incomplete_search_is_surfaced() -> None:
 @pytest.mark.anyio
 async def test_the_search_asks_drive_whether_its_answer_was_complete() -> None:
     files = RecordingFiles({}, list_responses={None: {"files": []}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     await gateway.search_items(("root",), "anything", limit=10)
 
@@ -552,7 +558,7 @@ async def test_a_folder_enumeration_that_outruns_its_budget_fails_loudly() -> No
     outgrew the budget needs an operator, not a quietly shrinking view."""
     endless = {"files": [], "nextPageToken": "more"}
     files = RecordingFiles({}, list_responses=dict.fromkeys([None, "more"], endless))
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     with pytest.raises(EnumerationBudgetExceeded, match="within 20 pages"):
         await gateway.list_folders()
@@ -570,7 +576,7 @@ async def test_an_enumeration_drive_calls_incomplete_says_so_rather_than_blaming
     budget is structural — and reporting it as "did not complete within 20
     pages" sends whoever reads it hunting for a reach that is not there."""
     files = RecordingFiles({}, list_responses={None: {"files": [], "incompleteSearch": True}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = make_gateway(files)
 
     with pytest.raises(EnumerationBudgetExceeded, match="incompleteSearch") as raised:
         await gateway.list_folders()
@@ -585,11 +591,7 @@ async def test_the_gateway_can_say_which_identity_it_is_using() -> None:
     different deployment, and nothing in its output says so unless this does."""
     about = RecordingAbout({"user": {"emailAddress": "bot@example.org"}}, [])
     files = RecordingFiles({})
-    gateway = GoogleDriveGateway(
-        RecordingService(files, about),
-        DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"),
-        credentials=UserCredentials(None),
-    )
+    gateway = GoogleDriveGateway(RecordingService(files, about), credentials=UserCredentials(None))
 
     assert await gateway.identity() == "bot@example.org"
     assert about.get_arguments == {"fields": "user(emailAddress)"}
@@ -600,7 +602,7 @@ async def test_descendants_are_listed_by_parent_without_a_keyword() -> None:
     """The census needs the corpus itself, not a keyword slice of it."""
     report = {"id": "file-1", "name": "Report", "mimeType": "text/plain", "parents": ["nested"]}
     files = RecordingFiles({}, list_responses={None: {"files": [report]}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     items = await gateway.list_descendants(("root", "nested"))
 
@@ -616,7 +618,7 @@ async def test_a_parent_batch_outside_drives_limit_is_refused(
     parent_ids: tuple[str, ...],
 ) -> None:
     """Drive caps a query at 400 parent clauses; the caller batches."""
-    gateway = make_gateway(RecordingFiles({}), DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(RecordingFiles({}))
 
     with pytest.raises(ValueError, match="between 1 and 400"):
         await gateway.search_items(parent_ids, "anything", limit=10)
@@ -639,7 +641,7 @@ async def test_a_search_asks_for_a_page_sized_to_the_request() -> None:
         {},
         list_responses={None: {"files": [_hit(i) for i in range(11)], "nextPageToken": "more"}},
     )
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     page = await gateway.search_items(("root",), "anything", limit=11)
 
@@ -661,7 +663,7 @@ async def test_a_search_keeps_paging_when_drive_returns_a_short_page() -> None:
             "page-2": {"files": [_hit(1), _hit(2)]},
         },
     )
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     page = await gateway.search_items(("root",), "anything", limit=3)
 
@@ -679,7 +681,7 @@ async def test_a_search_stops_once_the_request_is_met() -> None:
             "page-2": {"files": [_hit(2)], "nextPageToken": "page-3"},
         },
     )
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     page = await gateway.search_items(("root",), "anything", limit=3)
 
@@ -691,7 +693,7 @@ async def test_a_search_stops_once_the_request_is_met() -> None:
 @pytest.mark.anyio
 async def test_a_search_page_never_exceeds_drives_maximum() -> None:
     files = RecordingFiles({}, list_responses={None: {"files": []}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     await gateway.search_items(("root",), "anything", limit=5_000)
 
@@ -701,7 +703,7 @@ async def test_a_search_page_never_exceeds_drives_maximum() -> None:
 @pytest.mark.anyio
 async def test_a_search_refuses_a_request_for_nothing() -> None:
     files = RecordingFiles({}, list_responses={None: {"files": []}})
-    gateway = make_gateway(files, DriveLocation(DriveKind.MY_DRIVE))
+    gateway = make_gateway(files)
 
     with pytest.raises(ValueError):
         await gateway.search_items(("root",), "anything", limit=0)
@@ -723,7 +725,7 @@ async def test_gateway_reads_who_owns_and_who_last_touched_an_item() -> None:
             "lastModifyingUser": {"emailAddress": "grace@example.org"},
         }
     )
-    gateway = make_gateway(files, DriveLocation(DriveKind.SHARED_DRIVE, "drive-1"))
+    gateway = make_gateway(files)
 
     item = await gateway.get_item("file-1")
 

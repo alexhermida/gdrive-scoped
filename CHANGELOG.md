@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### The Drive location is measured, not configured — **breaking**
+
+- The Drive Location is read from the Configured Root Folder's own `driveId` instead of being
+  configured beside it and asserted against it. Drive already records where the folder lives:
+  absent `driveId` is My Drive, present names the Shared Drive. An operator had to restate
+  that, and a wrong restatement described a corpus that did not exist. ADR 0011 has the
+  decision, including what happens when the root moves.
+- `create_gateway(credentials)`, `GoogleDriveGateway(service=..., credentials=...)` and
+  `ScopedDrive(gateway=..., root_folder_id=...)` no longer take a `location`. `DriveKind` and
+  `DriveLocation` stay exported — consumers still read the measurement — and
+  `DriveLocation.of(item_drive_id)` builds one from Drive metadata.
+- `ScopedDrive.location` is now a read-only property holding the measurement. Reading it
+  before `await initialize()` raises `RuntimeError`, and so does every other call that checks
+  containment: **`initialize()` is now mandatory before a scope serves anything**, where it
+  used to be an optional up-front validation.
+- `initialize()` no longer raises `ScopeViolation("Configured root does not belong to the
+  configured Drive location")`. That check compared the root against an assertion about the
+  root and could not fail meaningfully. The other three root checks — identity, folder-ness,
+  trashed — are unchanged, and the measured location is still asserted on every item,
+  including on the root itself: `_validated_root` re-reads it on every request, so a root that
+  later moves to another drive is refused rather than re-measured.
+- `GDRIVE_DRIVE_KIND` and `GDRIVE_SHARED_DRIVE_ID` are gone, and `Settings` has no `location`.
+  `GDRIVE_ROOT_FOLDER_ID` is now the whole description of a corpus and remains required. A
+  leftover pair in an existing `.env` is ignored rather than honoured or rejected.
+- `includeItemsFromAllDrives` is sent on every `files.list`, because the gateway no longer
+  knows the location. It cannot widen the corpus — `DriveLocation.contains` asserts the
+  measured drive on every item — but a My Drive deployment now carries the identity's Shared
+  Drive rows through enumeration before discarding them, against a page budget bounded by that
+  identity's reach (ADR 0010). Keep the grant to the corpus.
+
+### Also
+
 - `ScopedDrive` refuses the alias `root` as its root folder, as the environment wrapper
   already did. Drive resolves the alias to the whole of a My Drive and the folder map was then
   keyed on the real ID, so every listing, search and read succeeded against the entire Drive;

@@ -11,7 +11,7 @@
 
 ### Unit and application tests
 
-Cover environment configuration, Drive Location request policy, cross-location rejection, query escaping, traversal, pagination, deduplication, current ancestry, shortcut rejection, raw-ID authorization, extractors, and read cursors.
+Cover environment configuration, Drive Location measurement, cross-location rejection, query escaping, traversal, pagination, deduplication, current ancestry, shortcut rejection, raw-ID authorization, extractors, and read cursors.
 
 ### Boundary tests
 
@@ -31,7 +31,7 @@ test session that has already imported either would prove nothing in-process.
 
 ### Optional live tests
 
-Use an explicitly configured Drive Location and Configured Root Folder. Live tests are marked and skipped unless their environment variables are present. They perform read-only operations only.
+Use an explicitly configured Root Folder, whose Drive Location the library measures. Live tests are marked and skipped unless their environment variables are present. They perform read-only operations only.
 
 The base live test validates and lists the configured root. Set `GDRIVE_LIVE_SEARCH_QUERY` and `GDRIVE_LIVE_EXPECTED_SOURCE` to additionally search for an exact relative path, revalidate its metadata, and perform one bounded content read.
 
